@@ -257,8 +257,8 @@ function Layout({ children, onLogout }) {
                       padding: '12px 16px',
                       borderRadius: '8px',
                       border: 'none',
-                      backgroundColor: selectedMenu === item.id ? '#eff6ff' : 'transparent',
-                      color: selectedMenu === item.id ? '#2563eb' : '#6b7280',
+                      backgroundColor: 'transparent',
+                      color: '#6b7280',
                       cursor: 'pointer',
                       transition: 'all 0.2s'
                     }}
