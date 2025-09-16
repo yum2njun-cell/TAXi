@@ -1,10 +1,9 @@
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Calendar, FileText, Bell, Settings, Home, Calculator, MapPin, Stamp, Globe, BarChart3, Clock, CheckCircle, AlertTriangle } from 'lucide-react'
+import { Calendar, FileText, Bell, Settings, Calculator, MapPin, Stamp, Globe, BarChart3, Clock, CheckCircle, AlertTriangle } from 'lucide-react'
 
 function Layout({ children, onLogout }) {
   const navigate = useNavigate()
-  const [selectedMenu, setSelectedMenu] = useState('home')
   const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false)
   const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false)
 
