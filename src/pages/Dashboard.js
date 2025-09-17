@@ -1,9 +1,57 @@
-import React from 'react'
+import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Calendar, FileText, Calculator, BarChart3, MapPin, Stamp, Globe } from 'lucide-react'
 
 function Dashboard() {
   const navigate = useNavigate()
+  const [taxdayEvents, setTaxdayEvents] = useState([])
+
+  // Taxday 이벤트 로드
+  useEffect(() => {
+    const loadTaxdayEvents = () => {
+      const savedEvents = localStorage.getItem('taxday-events')
+      if (savedEvents) {
+        const events = JSON.parse(savedEvents)
+        const processedEvents = processEventsForDashboard(events)
+        setTaxdayEvents(processedEvents)
+      }
+    }
+    loadTaxdayEvents()
+  }, [])
+
+  // Taxday 이벤트 처리 함수
+  const processEventsForDashboard = (events) => {
+    const today = new Date()
+    const allEvents = []
+
+    Object.entries(events).forEach(([dateKey, eventList]) => {
+      const [year, month, day] = dateKey.split('-').map(Number)
+      const eventDate = new Date(year, month, day)
+      
+      eventList.forEach(event => {
+        allEvents.push({
+          ...event,
+          date: eventDate,
+          dueDate: eventDate.toISOString().split('T')[0] // YYYY-MM-DD 형식
+        })
+      })
+    })
+
+    // 미래 이벤트만 필터링하고 날짜순 정렬
+    const futureEvents = allEvents
+      .filter(event => event.date >= today)
+      .sort((a, b) => a.date - b.date)
+      .slice(0, 3) // 가장 가까운 3개만
+
+    return futureEvents.map((event, index) => ({
+      id: index + 1,
+      title: event.title,
+      category: 'taxday',
+      dueDate: event.dueDate,
+      status: 'pending',
+      description: `${event.date.getMonth() + 1}월 ${event.date.getDate()}일 예정`
+    }))
+  }
 
   const getCurrentDate = () => {
     const today = new Date()
@@ -21,32 +69,8 @@ function Dashboard() {
     return diffDays
   }
 
-  const taxSchedules = [
-    { 
-      id: 1,
-      title: '법인세 신고',
-      category: 'corporate',
-      dueDate: '2025-03-31',
-      status: 'pending',
-      description: '2024년 4분기 법인세 신고'
-    },
-    { 
-      id: 2,
-      title: '부가세 신고',
-      category: 'vat',
-      dueDate: '2025-01-25',
-      status: 'pending',
-      description: '2024년 12월분 부가세 신고'
-    },
-    { 
-      id: 3,
-      title: '원천세 신고',
-      category: 'withholding',
-      dueDate: '2025-01-10',
-      status: 'completed',
-      description: '2024년 12월분 원천세 신고'
-    }
-  ]
+  // Taxday 데이터가 있으면 사용, 없으면 기본 데이터 사용
+  const taxSchedules = taxdayEvents.length > 0 ? taxdayEvents : []
 
   return (
     <>
@@ -61,7 +85,23 @@ function Dashboard() {
 
       {/* 이번 달 세무일정 */}
       <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '24px', boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1)', marginBottom: '24px' }}>
-        <h3 style={{ fontSize: '18px', fontWeight: '600', color: '#111827', marginBottom: '16px', margin: '0 0 16px 0' }}>이번 달 세무일정</h3>
+        <h3 
+          style={{ 
+            fontSize: '18px', 
+            fontWeight: '600', 
+            color: '#111827', 
+            marginBottom: '16px', 
+            margin: '0 0 16px 0',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px'
+          }}
+          onClick={() => navigate('/taxday')}
+        >
+          이번 달 세무일정
+          <Calendar size={16} style={{ color: '#6b7280' }} />
+        </h3>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           {taxSchedules.map((schedule) => {
             const daysFromToday = calculateDaysFromToday(schedule.dueDate)
@@ -82,14 +122,26 @@ function Dashboard() {
             }
             
             return (
-              <div key={schedule.id} style={{ 
-                display: 'flex', 
-                justifyContent: 'space-between', 
-                alignItems: 'center', 
-                padding: '16px', 
-                border: '1px solid #e5e7eb', 
-                borderRadius: '8px' 
-              }}>
+              <div 
+                key={schedule.id} 
+                style={{ 
+                  display: 'flex', 
+                  justifyContent: 'space-between', 
+                  alignItems: 'center', 
+                  padding: '16px', 
+                  border: '1px solid #e5e7eb', 
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease'
+                }}
+                onClick={() => navigate('/taxday')}
+                onMouseEnter={(e) => {
+                  e.target.style.backgroundColor = '#f9fafb'
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.backgroundColor = 'white'
+                }}
+              >
                 <div>
                   <h4 style={{ fontSize: '16px', fontWeight: '500', color: '#111827', margin: '0 0 4px 0' }}>{schedule.title}</h4>
                   <p style={{ fontSize: '14px', color: '#6b7280', margin: '0 0 4px 0' }}>{schedule.description}</p>

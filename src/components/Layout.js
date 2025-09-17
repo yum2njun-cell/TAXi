@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Calendar, FileText, Bell, Settings, Calculator, MapPin, Stamp, Globe, BarChart3, Clock, CheckCircle, AlertTriangle } from 'lucide-react'
 
@@ -6,6 +6,65 @@ function Layout({ children, onLogout }) {
   const navigate = useNavigate()
   const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false)
   const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false)
+  const [taxdayEvents, setTaxdayEvents] = useState([])
+
+  // Taxday 이벤트 로드
+  useEffect(() => {
+    const loadTaxdayEvents = () => {
+      const savedEvents = localStorage.getItem('taxday-events')
+      if (savedEvents) {
+        const events = JSON.parse(savedEvents)
+        const processedEvents = processEventsForNotifications(events)
+        setTaxdayEvents(processedEvents)
+      }
+    }
+    
+    loadTaxdayEvents()
+    // 5분마다 새로고침
+    const interval = setInterval(loadTaxdayEvents, 5 * 60 * 1000)
+    return () => clearInterval(interval)
+  }, [])
+
+  // Taxday 이벤트 처리 함수
+  const processEventsForNotifications = (events) => {
+    const today = new Date()
+    const oneWeekFromNow = new Date()
+    oneWeekFromNow.setDate(today.getDate() + 7)
+    
+    const allEvents = []
+
+    Object.entries(events).forEach(([dateKey, eventList]) => {
+      const [year, month, day] = dateKey.split('-').map(Number)
+      const eventDate = new Date(year, month, day)
+      
+      eventList.forEach(event => {
+        allEvents.push({
+          ...event,
+          date: eventDate,
+          dueDate: eventDate.toISOString().split('T')[0]
+        })
+      })
+    })
+
+    return allEvents
+  }
+
+  // 알림용 계산 함수들
+  const getUrgentEvents = () => {
+    const today = new Date()
+    const oneWeekFromNow = new Date()
+    oneWeekFromNow.setDate(today.getDate() + 7)
+    
+    return taxdayEvents.filter(event => 
+      event.date >= today && event.date <= oneWeekFromNow
+    ).sort((a, b) => a.date - b.date)
+  }
+
+  const getRecentCompletedEvent = () => {
+    const today = new Date()
+    const pastEvents = taxdayEvents.filter(event => event.date < today)
+    return pastEvents.sort((a, b) => b.date - a.date)[0]
+  }
 
   const taxCategories = [
     { id: 'corporate', name: '법인세', nameEn: 'Corporate Tax', icon: FileText, color: '#ef4444', bgColor: '#fef2f2' },
@@ -33,40 +92,15 @@ function Layout({ children, onLogout }) {
   const [selectedTaxCategory, setSelectedTaxCategory] = useState(taxCategories[0])
   const [showTaxDropdown, setShowTaxDropdown] = useState(false)
 
-  const taxSchedules = [
-    { 
-      id: 1,
-      title: '법인세 신고',
-      category: 'corporate',
-      dueDate: '2025-03-31',
+  const taxSchedules = taxdayEvents.length > 0 ? 
+    taxdayEvents.map((event, index) => ({
+      id: index + 1,
+      title: event.title,
+      category: 'taxday',
+      dueDate: event.dueDate,
       status: 'pending',
-      description: '2024년 4분기 법인세 신고'
-    },
-    { 
-      id: 2,
-      title: '부가세 신고',
-      category: 'vat',
-      dueDate: '2025-01-25',
-      status: 'pending',
-      description: '2024년 12월분 부가세 신고'
-    },
-    { 
-      id: 3,
-      title: '원천세 신고',
-      category: 'withholding',
-      dueDate: '2025-01-10',
-      status: 'completed',
-      description: '2024년 12월분 원천세 신고'
-    },
-    { 
-      id: 4,
-      title: '지방세 신고',
-      category: 'local',
-      dueDate: '2025-01-31',
-      status: 'pending',
-      description: '2024년 하반기 지방세 신고'
-    }
-  ]
+      description: `${event.date.getMonth() + 1}월 ${event.date.getDate()}일 예정`
+    })) : []
 
   const taxManagers = {
     corporate: '김회계',
@@ -376,22 +410,40 @@ function Layout({ children, onLogout }) {
                     </div>
 
                     {/* 두 번째 알림: 가장 급한 일정 */}
-                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', padding: '12px', borderRadius: '8px', backgroundColor: '#f9fafb' }}>
+                    <div 
+                      style={{ 
+                        display: 'flex', 
+                        alignItems: 'flex-start', 
+                        gap: '12px', 
+                        padding: '12px', 
+                        borderRadius: '8px', 
+                        backgroundColor: '#f9fafb',
+                        cursor: 'pointer'
+                      }}
+                      onClick={() => navigate('/taxday')}
+                    >
                       <div style={{ padding: '4px', borderRadius: '50%', backgroundColor: '#fef3c7' }}>
                         <AlertTriangle style={{ color: '#d97706' }} size={12} />
                       </div>
                       <div style={{ flex: 1 }}>
                         <p style={{ fontSize: '14px', fontWeight: '500', color: '#111827', margin: '0 0 4px 0' }}>긴급 일정 알림</p>
                         {(() => {
-                          const upcomingSchedule = taxSchedules
-                            .filter(schedule => calculateDaysFromToday(schedule.dueDate) >= 0)
-                            .sort((a, b) => calculateDaysFromToday(a.dueDate) - calculateDaysFromToday(b.dueDate))[0]
+                          const urgentEvents = getUrgentEvents()
                           
-                          if (upcomingSchedule) {
-                            const daysLeft = calculateDaysFromToday(upcomingSchedule.dueDate)
+                          if (urgentEvents.length > 0) {
+                            const urgentEvent = urgentEvents[0]
+                            const daysLeft = Math.ceil((urgentEvent.date - new Date()) / (1000 * 60 * 60 * 24))
                             return (
-                              <p style={{ fontSize: '12px', color: '#6b7280', margin: '0 0 4px 0' }}>
-                                {upcomingSchedule.title}이 {daysLeft === 0 ? '오늘' : `${daysLeft}일 후`} 마감입니다.
+                              <p 
+                                style={{ 
+                                  fontSize: '12px', 
+                                  color: '#6b7280', 
+                                  margin: '0 0 4px 0',
+                                  cursor: 'pointer'
+                                }}
+                                onClick={() => navigate('/taxday')}
+                              >
+                                {urgentEvent.title}이 {daysLeft === 0 ? '오늘' : `${daysLeft}일 후`} 마감입니다.
                               </p>
                             )
                           } else {
@@ -404,21 +456,30 @@ function Layout({ children, onLogout }) {
 
                     {/* 세 번째 알림 */}
                     {(() => {
-                      const recentPastSchedule = taxSchedules
-                        .filter(schedule => calculateDaysFromToday(schedule.dueDate) < 0)
-                        .sort((a, b) => calculateDaysFromToday(b.dueDate) - calculateDaysFromToday(a.dueDate))[0]
+                      const recentCompleted = getRecentCompletedEvent()
                       
-                      if (recentPastSchedule) {
-                        const daysPast = Math.abs(calculateDaysFromToday(recentPastSchedule.dueDate))
+                      if (recentCompleted) {
+                        const daysPast = Math.ceil((new Date() - recentCompleted.date) / (1000 * 60 * 60 * 24))
                         return (
-                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', padding: '12px', borderRadius: '8px', backgroundColor: '#f9fafb' }}>
+                          <div 
+                            style={{ 
+                              display: 'flex', 
+                              alignItems: 'flex-start', 
+                              gap: '12px', 
+                              padding: '12px', 
+                              borderRadius: '8px', 
+                              backgroundColor: '#f9fafb',
+                              cursor: 'pointer'
+                            }}
+                            onClick={() => navigate('/taxday')}
+                          >
                             <div style={{ padding: '4px', borderRadius: '50%', backgroundColor: '#d1fae5' }}>
                               <CheckCircle style={{ color: '#10b981' }} size={12} />
                             </div>
                             <div style={{ flex: 1 }}>
                               <p style={{ fontSize: '14px', fontWeight: '500', color: '#111827', margin: '0 0 4px 0' }}>최근 완료</p>
                               <p style={{ fontSize: '12px', color: '#6b7280', margin: '0 0 4px 0' }}>
-                                {recentPastSchedule.title}이 {daysPast}일 전에 완료되었습니다.
+                                {recentCompleted.title}이 {daysPast}일 전에 완료되었습니다.
                               </p>
                               <p style={{ fontSize: '12px', color: '#9ca3af', margin: '0' }}>{daysPast}일 전</p>
                             </div>
@@ -434,7 +495,12 @@ function Layout({ children, onLogout }) {
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
                     <h3 style={{ fontWeight: '600', color: '#111827', margin: '0' }}>최근 처리내역</h3>
-                    <button style={{ color: '#2563eb', fontSize: '14px', background: 'none', border: 'none', cursor: 'pointer' }}>더보기</button>
+                    <button 
+                      style={{ color: '#2563eb', fontSize: '14px', background: 'none', border: 'none', cursor: 'pointer' }}
+                      onClick={() => navigate('/taxday')}
+                    >
+                      더보기
+                    </button>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                     {[
