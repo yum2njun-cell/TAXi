@@ -74,117 +74,117 @@ const Taxday = () => {
     return holidays;
   };
 
-  // 영업일 계산 (주말, 공휴일 제외)
-  const getNextBusinessDay = (date) => {
-    const holidays = getKoreanHolidays(date.getFullYear());
-    let nextDay = new Date(date);
-    
-    while (true) {
-      const dayOfWeek = nextDay.getDay();
-      const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-      const isHoliday = holidays.some(holiday => 
-        holiday.getTime() === nextDay.getTime()
-      );
-      
-      if (!isWeekend && !isHoliday) {
-        break;
-      }
-      
-      nextDay.setDate(nextDay.getDate() + 1);
-    }
-    
-    return nextDay;
-  };
-
-  // 기본 세무 일정 생성
-  const generateDefaultEvents = () => {
-    const defaultEvents = {};
-    const years = [2021, 2022, 2023, 2024, 2025, 2026, 2027];
-    
-    years.forEach(year => {
-      // 연간 고정 일정
-      const yearlyEvents = [
-        { date: new Date(year, 2, 31), title: '법인세', isTax: true },
-        { date: new Date(year, 3, 30), title: '법인세 지방소득세분', isTax: true },
-        { date: new Date(year, 7, 31), title: '법인세 중간예납', isTax: true },
-        { date: new Date(year, 3, 25), title: '1기 예정 부가가치세', isTax: true },
-        { date: new Date(year, 6, 25), title: '1기 확정 부가가치세', isTax: true },
-        { date: new Date(year, 9, 25), title: '2기 예정 부가가치세', isTax: true },
-        { date: new Date(year + 1, 0, 25), title: '2기 확정 부가가치세', isTax: true },
-        { date: new Date(year, 6, 31), title: '주민세 사업소분', isTax: true },
-        { date: new Date(year, 6, 31), title: '건축물, 주택1기분 재산세', isTax: true },
-        { date: new Date(year, 8, 30), title: '토지, 주택2기분 재산세', isTax: true },
-        { date: new Date(year, 11, 15), title: '1차분납 종합부동산세', isTax: true },
-        { date: new Date(year, 5, 15), title: '2차분납 종합부동산세', isTax: true },
-        { date: new Date(year, 7, 31), title: '상반기 증권거래세', isTax: true },
-        { date: new Date(year + 1, 1, 28), title: '하반기 증권거래세', isTax: true },
-        { date: new Date(year, 11, 31), title: '이전가격보고서', isTax: true },
-        { date: new Date(year, 5, 30), title: '해외계좌신고', isTax: true },
-        { date: new Date(year, 0, 31), title: '근로소득 간이지급명세서', isTax: true },
-        { date: new Date(year, 6, 31), title: '근로소득 간이지급명세서', isTax: true },
-        { date: new Date(year + 1, 1, 28), title: '기타소득, 국내원천득, 배당소득 지급명세서', isTax: true },
-        { date: new Date(year + 1, 1, 28), title: '우리사주인출 및 과세명세서우리사주배당비과세 원천징수세액환급명세서', isTax: true },
-        { date: new Date(year + 1, 2, 10), title: '사업소득, 근로소득, 퇴직소득 지급명세서', isTax: true },
-        { date: new Date(year, 5, 30), title: '일감몰아주기 증여세', isTax: true }
-      ];
-      
-      // 월별 반복 일정
-      for (let month = 0; month < 12; month++) {
-        const lastDay = new Date(year, month + 1, 0).getDate();
-        
-        // 매월 10일
-        yearlyEvents.push(
-          { date: new Date(year, month, 10), title: '원천징수 이행상황신고', isTax: true },
-          { date: new Date(year, month, 10), title: '지방소득세(특별징수분)', isTax: true },
-          { date: new Date(year, month, 10), title: '주민세 종업원분', isTax: true }
-        );
-        
-        // 매월 말일
-        yearlyEvents.push(
-          { date: new Date(year, month, lastDay), title: '사업소득, 기타소득 간이지급명세서', isTax: true },
-          { date: new Date(year, month, lastDay), title: '일용근로소득 지급명세서', isTax: true }
-        );
-      }
-      
-      // 이벤트 처리 및 영업일 계산
-      yearlyEvents.forEach(event => {
-        let actualDate = event.date;
-        let isExtended = false;
-        
-        if (event.isTax) {
-          const businessDay = getNextBusinessDay(event.date);
-          if (businessDay.getTime() !== event.date.getTime()) {
-            actualDate = businessDay;
-            isExtended = true;
-          }
-        }
-        
-        const dateKey = `${actualDate.getFullYear()}-${actualDate.getMonth()}-${actualDate.getDate()}`;
-        
-        if (!defaultEvents[dateKey]) {
-          defaultEvents[dateKey] = [];
-        }
-        
-        const eventTitle = isExtended 
-          ? `${event.title} (${actualDate.getMonth() + 1}월 ${actualDate.getDate()}일로 연장됨)`
-          : event.title;
-          
-        defaultEvents[dateKey].push({
-          id: Date.now() + Math.random(),
-          title: eventTitle,
-          isDefault: true,
-          originalDate: event.date,
-          actualDate: actualDate,
-          isExtended: isExtended
-        });
-      });
-    });
-    
-    return defaultEvents;
-  };
-
   // 컴포넌트 초기화
   useEffect(() => {
+    // 영업일 계산 (주말, 공휴일 제외)
+    const getNextBusinessDay = (date) => {
+      const holidays = getKoreanHolidays(date.getFullYear());
+      let nextDay = new Date(date);
+      
+      while (true) {
+        const dayOfWeek = nextDay.getDay();
+        const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+        const isHoliday = holidays.some(holiday => 
+          holiday.getTime() === nextDay.getTime()
+        );
+        
+        if (!isWeekend && !isHoliday) {
+          break;
+        }
+        
+        nextDay.setDate(nextDay.getDate() + 1);
+      }
+      
+      return nextDay;
+    };
+
+    // 기본 세무 일정 생성
+    const generateDefaultEvents = () => {
+      const defaultEvents = {};
+      const years = [2021, 2022, 2023, 2024, 2025, 2026, 2027];
+      
+      years.forEach(year => {
+        // 연간 고정 일정
+        const yearlyEvents = [
+          { date: new Date(year, 2, 31), title: '법인세', isTax: true },
+          { date: new Date(year, 3, 30), title: '법인세 지방소득세분', isTax: true },
+          { date: new Date(year, 7, 31), title: '법인세 중간예납', isTax: true },
+          { date: new Date(year, 3, 25), title: '1기 예정 부가가치세', isTax: true },
+          { date: new Date(year, 6, 25), title: '1기 확정 부가가치세', isTax: true },
+          { date: new Date(year, 9, 25), title: '2기 예정 부가가치세', isTax: true },
+          { date: new Date(year + 1, 0, 25), title: '2기 확정 부가가치세', isTax: true },
+          { date: new Date(year, 6, 31), title: '주민세 사업소분', isTax: true },
+          { date: new Date(year, 6, 31), title: '건축물, 주택1기분 재산세', isTax: true },
+          { date: new Date(year, 8, 30), title: '토지, 주택2기분 재산세', isTax: true },
+          { date: new Date(year, 11, 15), title: '1차분납 종합부동산세', isTax: true },
+          { date: new Date(year, 5, 15), title: '2차분납 종합부동산세', isTax: true },
+          { date: new Date(year, 7, 31), title: '상반기 증권거래세', isTax: true },
+          { date: new Date(year + 1, 1, 28), title: '하반기 증권거래세', isTax: true },
+          { date: new Date(year, 11, 31), title: '이전가격보고서', isTax: true },
+          { date: new Date(year, 5, 30), title: '해외계좌신고', isTax: true },
+          { date: new Date(year, 0, 31), title: '근로소득 간이지급명세서', isTax: true },
+          { date: new Date(year, 6, 31), title: '근로소득 간이지급명세서', isTax: true },
+          { date: new Date(year + 1, 1, 28), title: '기타소득, 국내원천득, 배당소득 지급명세서', isTax: true },
+          { date: new Date(year + 1, 1, 28), title: '우리사주인출 및 과세명세서우리사주배당비과세 원천징수세액환급명세서', isTax: true },
+          { date: new Date(year + 1, 2, 10), title: '사업소득, 근로소득, 퇴직소득 지급명세서', isTax: true },
+          { date: new Date(year, 5, 30), title: '일감몰아주기 증여세', isTax: true }
+        ];
+        
+        // 월별 반복 일정
+        for (let month = 0; month < 12; month++) {
+          const lastDay = new Date(year, month + 1, 0).getDate();
+          
+          // 매월 10일
+          yearlyEvents.push(
+            { date: new Date(year, month, 10), title: '원천징수 이행상황신고', isTax: true },
+            { date: new Date(year, month, 10), title: '지방소득세(특별징수분)', isTax: true },
+            { date: new Date(year, month, 10), title: '주민세 종업원분', isTax: true }
+          );
+          
+          // 매월 말일
+          yearlyEvents.push(
+            { date: new Date(year, month, lastDay), title: '사업소득, 기타소득 간이지급명세서', isTax: true },
+            { date: new Date(year, month, lastDay), title: '일용근로소득 지급명세서', isTax: true }
+          );
+        }
+        
+        // 이벤트 처리 및 영업일 계산
+        yearlyEvents.forEach(event => {
+          let actualDate = event.date;
+          let isExtended = false;
+          
+          if (event.isTax) {
+            const businessDay = getNextBusinessDay(event.date);
+            if (businessDay.getTime() !== event.date.getTime()) {
+              actualDate = businessDay;
+              isExtended = true;
+            }
+          }
+          
+          const dateKey = `${actualDate.getFullYear()}-${actualDate.getMonth()}-${actualDate.getDate()}`;
+          
+          if (!defaultEvents[dateKey]) {
+            defaultEvents[dateKey] = [];
+          }
+          
+          const eventTitle = isExtended 
+            ? `${event.title} (${actualDate.getMonth() + 1}월 ${actualDate.getDate()}일로 연장됨)`
+            : event.title;
+            
+          defaultEvents[dateKey].push({
+            id: Date.now() + Math.random(),
+            title: eventTitle,
+            isDefault: true,
+            originalDate: event.date,
+            actualDate: actualDate,
+            isExtended: isExtended
+          });
+        });
+      });
+      
+      return defaultEvents;
+    };
+
     const savedEvents = localStorage.getItem('taxday-events');
     if (savedEvents) {
       setEvents(JSON.parse(savedEvents));
@@ -193,7 +193,7 @@ const Taxday = () => {
       setEvents(defaultEvents);
       localStorage.setItem('taxday-events', JSON.stringify(defaultEvents));
     }
-  }, [generateDefaultEvents]);
+  }, []); // 빈 배열로 의존성 설정
 
   // 이벤트 저장
   const saveEvents = (newEvents) => {
