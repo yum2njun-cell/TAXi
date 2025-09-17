@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Calendar, ChevronLeft, ChevronRight, Search, Trash2, Home } from 'lucide-react';
 
 const Taxday = () => {
-  const [currentDate, setCurrentDate] = useState(new Date());
+  const [currentDate] = useState(new Date());
   const [viewDate, setViewDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(null);
   const [events, setEvents] = useState({});
@@ -193,7 +193,7 @@ const Taxday = () => {
       setEvents(defaultEvents);
       localStorage.setItem('taxday-events', JSON.stringify(defaultEvents));
     }
-  }, []);
+  }, [generateDefaultEvents]);
 
   // 이벤트 저장
   const saveEvents = (newEvents) => {

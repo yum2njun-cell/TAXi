@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Upload, FileSpreadsheet, Download, Calculator, AlertCircle, CheckCircle, Trash2, Car, Building2, Receipt, FileText, TrendingUp } from 'lucide-react';
+import { Upload, Download, Calculator, AlertCircle, CheckCircle, Trash2, Car, Building2, Receipt, FileText, TrendingUp } from 'lucide-react';
 import * as XLSX from 'xlsx';  
 
 const TaxCorporate = () => {
