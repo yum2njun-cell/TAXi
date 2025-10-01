@@ -29,13 +29,6 @@ def get_menu_config():
                 "submenu": {
                     "업무용승용차 관리": {
                         "page": "pages/corp_workingcar.py"
-                    },
-                    "감가상각비 관리": {
-                        "page": "pages/02_interim_payment.py"
-                    },
-                    "이월결손금": {
-                        "icon": '<i class="fas fa-chart-line-down submenu-icon"></i>',
-                        "page": "pages/05_loss_carryforward.py"
                     }
                 }
             },
@@ -47,10 +40,7 @@ def get_menu_config():
                     },
                     "법인카드 공제 확인": {
                         "page": "pages/card_deduction.py"
-                    },
-                    "간이과세": {
-                        "page": "pages/taxk/vat/04_simplified_tax.py"
-                    },
+                    }
                 }
             },
             "원천세": {
@@ -58,13 +48,7 @@ def get_menu_config():
                 "submenu": {
                     "이행상황신고서": {
                         "page": "pages/withholding_salary.py"
-                    },
-                    "외국납부세액공제": {
-                        "page": "pages/02_business.py"
-                    },
-                    "지급명세서": {
-                        "page": "pages/03_dividend.py"
-                    },
+                    }
                 }
             },
             "지방세": {
@@ -72,13 +56,7 @@ def get_menu_config():
                 "submenu": {
                     "재산세": {
                         "page": "pages/local_tax_property.py"
-                    },
-                    "증권거래세": {
-                        "page": "pages/taxk/local/02_property.py"
-                    },
-                    "취득세": {
-                        "page": "pages/taxk/local/03_automobile.py"
-                    },
+                    }
                 }
             },
             "인지세": {
@@ -92,14 +70,8 @@ def get_menu_config():
             "국제조세": {
                 "boxed": True, 
                 "submenu": {
-                    "BEPS 보고서": {
-                        "page": "pages/taxk/international/01_transfer_pricing.py"
-                    },
                     "조세조약": {
                         "page": "pages/treaty_search.py"
-                    },
-                    "해외금융계좌": {
-                        "page": "pages/taxk/international/04_foreign_account.py"
                     }
                 }
             }
