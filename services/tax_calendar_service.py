@@ -214,8 +214,21 @@ class TaxCalendarService:
         return False, ""
     
     def get_schedules_for_date(self, date_str):
-        """특정 날짜의 일정 조회"""
-        return st.session_state.get("tax_schedules", {}).get(date_str, [])
+        """특정 날짜의 일정 조회 (숨긴 일정 제외)"""
+        from services.user_preferences_service import get_hidden_default_schedules
+        
+        all_schedules = st.session_state.get("tax_schedules", {}).get(date_str, [])
+        hidden_schedules = get_hidden_default_schedules()
+        
+        # 숨긴 기본 일정 필터링
+        filtered_schedules = []
+        for schedule in all_schedules:
+            schedule_key = f"{date_str}|{schedule['title']}"
+            if schedule.get('is_default', False) and schedule_key in hidden_schedules:
+                continue  # 숨긴 일정은 제외
+            filtered_schedules.append(schedule)
+        
+        return filtered_schedules
     
     def get_schedules_for_month(self, year, month):
         """특정 월의 모든 일정 조회"""
@@ -258,12 +271,59 @@ class TaxCalendarService:
         st.session_state.tax_schedules[date_str].append(new_schedule)
     
     def delete_schedule(self, date_str, schedule_index):
-        """일정 삭제"""
+        """일정 삭제 (개인 일정만 삭제 가능)"""
+        schedules = self.get_schedules_for_date(date_str)  # 필터링된 일정 가져오기
+        
+        if 0 <= schedule_index < len(schedules):
+            schedule = schedules[schedule_index]
+            
+            # 기본 일정은 삭제 불가
+            if schedule.get('is_default', False):
+                return False, "기본 일정은 삭제할 수 없습니다. '숨기기' 기능을 사용하세요."
+            
+            # 원본 일정 목록에서 찾아서 삭제
+            original_schedules = st.session_state.get("tax_schedules", {}).get(date_str, [])
+            for i, orig_schedule in enumerate(original_schedules):
+                if orig_schedule['title'] == schedule['title'] and not orig_schedule.get('is_default', False):
+                    del st.session_state.tax_schedules[date_str][i]
+                    if not st.session_state.tax_schedules[date_str]:
+                        del st.session_state.tax_schedules[date_str]
+                    return True, "일정이 삭제되었습니다."
+        
+        return False, "일정을 찾을 수 없습니다."
+
+    def hide_default_schedule(self, date_str, schedule_index):
+        """기본 일정 숨기기"""
+        from services.user_preferences_service import add_hidden_default_schedule
+        
+        schedules = self.get_schedules_for_date(date_str)
+        
+        if 0 <= schedule_index < len(schedules):
+            schedule = schedules[schedule_index]
+            
+            if schedule.get('is_default', False):
+                add_hidden_default_schedule(date_str, schedule['title'])
+                return True, "기본 일정이 숨겨졌습니다."
+            else:
+                return False, "개인 일정은 '삭제' 버튼을 사용하세요."
+        
+        return False, "일정을 찾을 수 없습니다."
+
+    def hide_default_schedule(self, date_str, schedule_index):
+        """기본 일정 숨기기"""
+        from services.user_preferences_service import add_hidden_default_schedule
+        
         if date_str in st.session_state.tax_schedules:
             if 0 <= schedule_index < len(st.session_state.tax_schedules[date_str]):
-                del st.session_state.tax_schedules[date_str][schedule_index]
-                if not st.session_state.tax_schedules[date_str]:
-                    del st.session_state.tax_schedules[date_str]
+                schedule = st.session_state.tax_schedules[date_str][schedule_index]
+                
+                if schedule.get('is_default', False):
+                    add_hidden_default_schedule(date_str, schedule['title'])
+                    return True, "기본 일정이 숨겨졌습니다."
+                else:
+                    return False, "개인 일정은 '삭제' 버튼을 사용하세요."
+        
+        return False, "일정을 찾을 수 없습니다."
 
     def search_schedules(self, keyword, start_date=None, end_date=None):
         """키워드로 일정 검색"""

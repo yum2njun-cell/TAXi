@@ -11,7 +11,7 @@ def get_menu_config():
                 "page": "pages/TAXday.py"
             },
             "TAXtory": {
-                "page": "pages/taxiverse/02_TAXtory.py"
+                "page": "pages/TAXtory.py"
             },
             "TAXrary": {
                 "page": "pages/taxiverse/04_TAXrary.py"

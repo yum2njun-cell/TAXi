@@ -229,3 +229,33 @@ def get_user_preference(key: str, default=None, user_id: str = None) -> Any:
 def set_user_preference(key: str, value: Any, user_id: str = None) -> bool:
     """사용자 설정값 저장"""
     return get_user_preferences_service().set_user_preference(key, value, user_id)
+
+def get_hidden_default_schedules(user_id: str = None) -> List[str]:
+    """숨긴 기본 일정 목록 반환"""
+    return get_user_preferences_service().get_user_preference("hidden_default_schedules", [], user_id)
+
+def add_hidden_default_schedule(date_str: str, title: str, user_id: str = None) -> bool:
+    """기본 일정을 숨김 목록에 추가"""
+    hidden_schedules = get_hidden_default_schedules(user_id)
+    
+    schedule_key = f"{date_str}|{title}"
+    if schedule_key not in hidden_schedules:
+        hidden_schedules.append(schedule_key)
+        return get_user_preferences_service().set_user_preference("hidden_default_schedules", hidden_schedules, user_id)
+    
+    return True
+
+def remove_hidden_default_schedule(date_str: str, title: str, user_id: str = None) -> bool:
+    """숨김 목록에서 기본 일정 제거 (다시 보이기)"""
+    hidden_schedules = get_hidden_default_schedules(user_id)
+    
+    schedule_key = f"{date_str}|{title}"
+    if schedule_key in hidden_schedules:
+        hidden_schedules.remove(schedule_key)
+        return get_user_preferences_service().set_user_preference("hidden_default_schedules", hidden_schedules, user_id)
+    
+    return False
+
+def clear_all_hidden_schedules(user_id: str = None) -> bool:
+    """모든 숨긴 일정 초기화"""
+    return get_user_preferences_service().set_user_preference("hidden_default_schedules", [], user_id)

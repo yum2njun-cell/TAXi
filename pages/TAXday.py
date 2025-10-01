@@ -197,19 +197,40 @@ with manage_col:
                         schedule_type_label = "기본일정"
                     st.write(f"**구분:** {schedule_type_label}")
                     
-                    # 수정/삭제 버튼
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        if st.button("수정", key=f"edit_{i}", disabled=is_guest()):
-                            if check_permission("일정 수정"):
-                                st.session_state.edit_schedule_index = i
-                                st.rerun()
-                    with col2:
-                        if st.button("삭제", key=f"delete_{i}", disabled=is_guest()):
-                            if check_permission("일정 삭제"):
-                                tax_service.delete_schedule(st.session_state.selected_date, i)
-                                st.success("일정이 삭제되었습니다!")
-                                st.rerun()
+                    # 수정/삭제/숨기기 버튼
+                    is_default = schedule.get('is_default', False)
+                    
+                    if is_default:
+                        # 기본 일정: 숨기기만 가능
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.caption("기본 일정 (수정 불가)")
+                        with col2:
+                            if st.button("숨기기", key=f"hide_{i}", disabled=is_guest()):
+                                if check_permission("일정 관리"):
+                                    success, message = tax_service.hide_default_schedule(st.session_state.selected_date, i)
+                                    if success:
+                                        st.success(message)
+                                    else:
+                                        st.error(message)
+                                    st.rerun()
+                    else:
+                        # 개인 일정: 수정/삭제 가능
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            if st.button("수정", key=f"edit_{i}", disabled=is_guest()):
+                                if check_permission("일정 수정"):
+                                    st.session_state.edit_schedule_index = i
+                                    st.rerun()
+                        with col2:
+                            if st.button("삭제", key=f"delete_{i}", disabled=is_guest()):
+                                if check_permission("일정 삭제"):
+                                    success, message = tax_service.delete_schedule(st.session_state.selected_date, i)
+                                    if success:
+                                        st.success(message)
+                                    else:
+                                        st.error(message)
+                                    st.rerun()
         else:
             st.info("선택된 날짜에 일정이 없습니다.")
     else:
@@ -218,6 +239,44 @@ with manage_col:
     
     st.markdown("---")
     
+    # 숨긴 기본 일정 관리
+    with st.expander("숨긴 기본 일정 관리", expanded=False):
+        from services.user_preferences_service import get_hidden_default_schedules, remove_hidden_default_schedule, clear_all_hidden_schedules
+        
+        hidden_schedules = get_hidden_default_schedules()
+        
+        if hidden_schedules:
+            st.write(f"총 **{len(hidden_schedules)}개**의 기본 일정이 숨겨져 있습니다.")
+            
+            # 전체 보이기 버튼
+            if st.button("전체 다시 보이기", disabled=is_guest()):
+                if check_permission("일정 관리"):
+                    clear_all_hidden_schedules()
+                    st.success("모든 숨긴 일정이 다시 표시됩니다!")
+                    st.rerun()
+            
+            st.markdown("---")
+            
+            # 개별 일정 목록
+            for hidden_key in hidden_schedules:
+                try:
+                    date_str, title = hidden_key.split("|", 1)
+                    date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+                    
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        st.write(f"**{date_obj.strftime('%m/%d')}** {title}")
+                    with col2:
+                        if st.button("보이기", key=f"show_{hidden_key}", disabled=is_guest()):
+                            if check_permission("일정 관리"):
+                                remove_hidden_default_schedule(date_str, title)
+                                st.success("일정이 다시 표시됩니다!")
+                                st.rerun()
+                except ValueError:
+                    continue
+        else:
+            st.info("숨긴 기본 일정이 없습니다.")
+
     # 2. 날짜 이동
     # 오늘로 버튼
     today_col1, today_col2 = st.columns([1, 1])

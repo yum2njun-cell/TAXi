@@ -3,7 +3,7 @@
 
 /* 메뉴 섹션 제목 */
 .menu-section-title {
-  font-size: 0.9rem;
+  font-size: 1.5rem;
   font-weight: 700;
   color: var(--gray-900);
   margin: 1rem 0 0.5rem 0;

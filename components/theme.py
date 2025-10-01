@@ -25,17 +25,16 @@ def load_custom_theme():
 
 def apply_custom_theme():
     """커스텀 테마가 있으면 적용"""
-    # 세션에 없으면 파일에서 로드
     if 'custom_theme' not in st.session_state:
         loaded_theme = load_custom_theme()
         if loaded_theme:
             st.session_state.custom_theme = loaded_theme
     
-    # 테마 적용
     if 'custom_theme' in st.session_state:
         theme = st.session_state.custom_theme
         custom_css = f"""
         <style>
+        /* CSS 변수 */
         :root {{
             --gray-900: {theme['text_color']} !important;
             --gray-500: {theme['text_color_light']} !important;
@@ -45,8 +44,71 @@ def apply_custom_theme():
             --bg-pink: {theme['bg_color2']} !important;
         }}
         
+        /* 전체 앱 배경 */
         .stApp {{
             background: linear-gradient(135deg, {theme['bg_color1']} 0%, {theme['bg_color2']} 100%) !important;
+        }}
+        
+        /* 탭 스타일 */
+        .stTabs [data-baseweb="tab-list"] {{
+            gap: 8px;
+        }}
+        
+        .stTabs [data-baseweb="tab"] {{
+            background-color: transparent;
+            border-radius: 8px 8px 0 0;
+            color: {theme['text_color_light']};
+            padding: 10px 20px;
+        }}
+        
+        .stTabs [aria-selected="true"] {{
+            background-color: {theme['main_color']} !important;
+            color: {theme['text_color']} !important;
+            font-weight: 600;
+        }}
+        
+        /* 버튼 스타일 */
+        .stButton > button {{
+            background-color: {theme['main_color']} !important;
+            color: {theme['text_color']} !important;
+            border: none !important;
+        }}
+        
+        .stButton > button:hover {{
+            background-color: {theme['main_color_dark']} !important;
+        }}
+        
+        /* Primary 버튼 */
+        .stButton > button[kind="primary"] {{
+            background-color: {theme['main_color_dark']} !important;
+        }}
+        
+        /* 데이터프레임 헤더 */
+        .stDataFrame thead tr th {{
+            background-color: {theme['main_color']} !important;
+            color: {theme['text_color']} !important;
+        }}
+        
+        /* 입력 필드 포커스 */
+        .stTextInput > div > div > input:focus,
+        .stSelectbox > div > div > div:focus {{
+            border-color: {theme['main_color']} !important;
+        }}
+        
+        /* 사이드바 */
+        section[data-testid="stSidebar"] {{
+            background: linear-gradient(135deg, {theme['bg_color1']} 0%, {theme['bg_color2']} 100%) !important;
+        }}
+        
+        /* Expander */
+        .streamlit-expanderHeader {{
+            background-color: {theme['main_color']} !important;
+            color: {theme['text_color']} !important;
+        }}
+        
+        /* 메트릭 */
+        [data-testid="stMetricValue"] {{
+            color: {theme['main_color_dark']} !important;
         }}
         </style>
         """
