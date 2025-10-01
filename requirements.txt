@@ -41,3 +41,6 @@ pandas
 requests
 toml
 openpyxl
+
+pdf2image
+plotly
