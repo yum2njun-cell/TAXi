@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "TAXⓘ"
     DEMO_USER: str = "admin"
     DEMO_PASS: str = "taxi1234"
+    SECRET_KEY: str = "change-me-please"
     
     # 추가 설정들
     VERSION: str = "2.0.0"

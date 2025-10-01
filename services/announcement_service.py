@@ -53,11 +53,27 @@ class AnnouncementService:
             print(f"공지사항 저장 실패: {e}")
             return False
     
-    def create_announcement(self, title: str, content: str) -> bool:
-        """새 공지사항 생성"""
-        current_user = self._get_current_user()
-        if not current_user:
-            return False
+    def create_announcement(self, title: str, content: str, category: str = "팀", author_override: dict = None) -> bool:
+        """
+        새 공지사항 생성
+        
+        Args:
+            title: 공지사항 제목
+            content: 공지사항 내용
+            category: 카테고리 ("팀" 또는 "세법")
+            author_override: 시스템 자동 생성용 작성자 정보 (선택)
+        """
+        # 일반 사용자가 작성하는 경우
+        if author_override is None:
+            current_user = self._get_current_user()
+            if not current_user:
+                return False
+            author_id = current_user["user_id"]
+            author_name = current_user.get("name", "알 수 없음")
+        # 시스템 자동 생성 (monitor.py에서 호출)
+        else:
+            author_id = author_override.get("user_id", "system")
+            author_name = author_override.get("name", "자동 모니터링")
         
         # 고유 ID 생성
         announcement_id = f"ann_{int(datetime.now().timestamp() * 1000)}"
@@ -66,15 +82,16 @@ class AnnouncementService:
             'id': announcement_id,
             'title': title,
             'content': content,
-            'author_id': current_user["user_id"],
-            'author_name': current_user.get("name", "알 수 없음"),
+            'category': category,  # ← 추가
+            'author_id': author_id,
+            'author_name': author_name,
             'created_at': datetime.now().isoformat(),
             'updated_at': datetime.now().isoformat(),
             'is_active': True
         }
         
         announcements = self._load_announcements()
-        announcements.insert(0, new_announcement)  # 맨 앞에 추가 (최신)
+        announcements.insert(0, new_announcement)
         
         return self._save_announcements(announcements)
     
@@ -269,6 +286,40 @@ class AnnouncementService:
                 return "방금 전"
         except:
             return "알 수 없음"
+
+    def get_announcements_by_category(self, category: str, page: int = 1, per_page: int = 20) -> Tuple[List[Dict], int, int]:
+        """카테고리별 공지사항 조회"""
+        all_announcements = self._load_announcements()
+        
+        # 카테고리 필터링 (기본값 '팀')
+        filtered = [
+            a for a in all_announcements 
+            if a.get('is_active', True) and a.get('category', '팀') == category
+        ]
+        
+        total_count = len(filtered)
+        total_pages = (total_count + per_page - 1) // per_page
+        
+        # 페이지네이션
+        start_idx = (page - 1) * per_page
+        end_idx = start_idx + per_page
+        page_announcements = filtered[start_idx:end_idx]
+        
+        return page_announcements, total_pages, total_count
+
+    def get_latest_announcements_for_dashboard(self, limit: int = 5) -> List[Dict]:
+        """
+        대시보드용 최신 공지사항 조회 (카테고리별로 섞여서 표시)
+        
+        Returns:
+            최신 공지사항 리스트 (카테고리 태그 포함)
+        """
+        announcements = self._load_announcements()
+        
+        # 활성 공지사항만 필터링
+        active = [a for a in announcements if a.get('is_active', True)]
+        
+        return active[:limit]
 
 # 싱글톤 인스턴스
 _announcement_service = None

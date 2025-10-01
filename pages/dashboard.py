@@ -161,25 +161,44 @@ with col_notice:
     # 공지사항
     st.markdown("### 공지사항")
 
-    # 최신 공지사항 표시
+    # 최신 공지사항 표시 (팀 + 세법 통합)
     from services.announcement_service import get_announcement_service
     announcement_service = get_announcement_service()
-    latest_announcement = announcement_service.get_latest_announcement()
+    
+    # 최신 공지 3개 가져오기 (팀 + 세법 섞여서)
+    latest_announcements = announcement_service.get_latest_announcements_for_dashboard(limit=3)
 
-    if latest_announcement:
-        # 최신 공지사항 표시
-        st.markdown(f"**{latest_announcement.get('title', '제목 없음')}**")
-        content = latest_announcement.get('content', '')
-        if len(content) > 100:
-            st.write(content[:100] + "...")
-        else:
-            st.write(content)
-        
-        col_author, col_date = st.columns(2)
-        with col_author:
-            st.caption(f"{latest_announcement.get('author_name', '알 수 없음')}")
-        with col_date:
-            st.caption(f"{announcement_service.get_time_ago(latest_announcement.get('created_at', ''))}")
+    if latest_announcements:
+        for ann in latest_announcements:
+            # 카테고리 태그
+            category = ann.get('category', '팀')
+            if category == '세법':
+                tag = " <세법>"
+                tag_color = "#FFF3CD"  # 노란색
+            else:
+                tag = " <팀>"
+                tag_color = "#E3F2FD"  # 파란색
+            
+            # 공지사항 카드
+            st.markdown(f"""
+            <div style="
+                background: {tag_color}; 
+                border-left: 4px solid {'#F59E0B' if category == '세법' else '#2196F3'};
+                border-radius: 6px;
+                padding: 0.75rem;
+                margin-bottom: 0.75rem;
+            ">
+                <div style="font-size: 0.75rem; color: #6B7280; margin-bottom: 0.25rem;">
+                    {tag}
+                </div>
+                <div style="font-weight: 600; color: #1F2937; margin-bottom: 0.25rem;">
+                    {ann.get('title', '제목 없음')}
+                </div>
+                <div style="font-size: 0.8rem; color: #6B7280;">
+                    {announcement_service.get_time_ago(ann.get('created_at', ''))}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
     else:
         st.info("아직 공지사항이 없습니다.")
 

@@ -35,3 +35,9 @@ python-dateutil==2.9.0.post0
 # ===== Utils =====
 requests==2.32.5
 beautifulsoup4==4.13.5
+
+selenium
+pandas
+requests
+toml
+openpyxl

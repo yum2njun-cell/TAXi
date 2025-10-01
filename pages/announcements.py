@@ -99,30 +99,197 @@ if "announcement_mode" not in st.session_state:
 if "selected_announcement" not in st.session_state:
     st.session_state.selected_announcement = None
 
-# 상단 액션 버튼들
-col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
+# 탭 구조로 변경
+tab1, tab2 = st.tabs([" 팀 공지사항", " 세법 공지사항"])
 
-with col1:
-    st.markdown("###  팀 공지사항")
-
-with col2:
-    if st.button(" 새 공지사항", type="primary", disabled=is_guest()):
-        if check_permission("공지사항 작성"):
-            st.session_state.announcement_mode = "create"
+# ==================== 팀 공지사항 탭 ====================
+with tab1:
+    # 상단 액션 버튼들
+    col1, col2, col3 = st.columns([2, 1, 1])
+    
+    with col1:
+        st.markdown("### 팀 공지사항")
+    
+    with col2:
+        if st.button("새 공지사항", type="primary", key="create_team", disabled=is_guest()):
+            if check_permission("공지사항 작성"):
+                st.session_state.announcement_mode = "create"
+                st.session_state.announcement_category = "팀"
+                st.rerun()
+    
+    with col3:
+        if st.button("내 공지사항", key="my_team"):
+            st.session_state.announcement_mode = "my_announcements"
+            st.session_state.announcement_category = "팀"
             st.rerun()
+    
+    st.markdown("---")
+    
+    # 검색 기능
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        search_keyword = st.text_input("검색", placeholder="제목, 내용, 작성자로 검색...", key="search_team")
+    with col2:
+        if st.button("검색", use_container_width=True, key="search_btn_team"):
+            st.session_state.announcement_page = 1
+    
+    # 팀 공지사항 조회
+    if search_keyword:
+        # 검색 결과를 카테고리 필터링
+        all_announcements, _, _ = announcement_service.search_announcements(
+            search_keyword, page=st.session_state.announcement_page
+        )
+        announcements = [a for a in all_announcements if a.get('category', '팀') == '팀']
+        total_count = len(announcements)
+        total_pages = (total_count + 19) // 20
+        st.info(f"'{search_keyword}' 검색 결과: {total_count}개")
+    else:
+        announcements, total_pages, total_count = announcement_service.get_announcements_by_category(
+            category="팀",
+            page=st.session_state.announcement_page
+        )
+    
+    # 공지사항 목록 표시 (기존 코드 재사용)
+    if total_count > 0:
+        for announcement in announcements:
+            st.markdown(f"""
+            <div class="announcement-card">
+                <div class="announcement-title">{announcement.get('title', '제목 없음')}</div>
+                <div class="announcement-meta">
+                     {announcement.get('author_name', '알 수 없음')} • 
+                     {announcement_service.format_date(announcement.get('created_at', ''))} • 
+                     {announcement_service.get_time_ago(announcement.get('created_at', ''))}
+                </div>
+                <div class="announcement-content">
+                    {announcement.get('content', '내용 없음')[:200]}{'...' if len(announcement.get('content', '')) > 200 else ''}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            if current_user and announcement.get('author_id') == current_user["user_id"]:
+                col1, col2, col3 = st.columns([6, 1, 1])
+                with col2:
+                    if st.button("수정", key=f"edit_team_{announcement['id']}", help="수정", disabled=is_guest()):
+                        if check_permission("공지사항 수정"):
+                            st.session_state.selected_announcement = announcement
+                            st.session_state.announcement_mode = "edit"
+                            st.rerun()
+                with col3:
+                    if st.button("삭제", key=f"delete_team_{announcement['id']}", help="삭제", disabled=is_guest()):
+                        if check_permission("공지사항 삭제"):
+                            if announcement_service.delete_announcement(announcement['id']):
+                                st.success("공지사항이 삭제되었습니다!")
+                                st.rerun()
+                            else:
+                                st.error("삭제에 실패했습니다.")
+            
+            st.markdown("---")
+        
+        # 페이지네이션 (기존 코드 그대로 사용, key만 수정)
+        if total_pages > 1:
+            col1, col2, col3, col4, col5 = st.columns([1, 1, 2, 1, 1])
+            
+            with col1:
+                if st.session_state.announcement_page > 1:
+                    if st.button("◀◀ 첫 페이지", key="first_page_team"):
+                        st.session_state.announcement_page = 1
+                        st.rerun()
+            
+            with col2:
+                if st.session_state.announcement_page > 1:
+                    if st.button("◀ 이전", key="prev_page_team"):
+                        st.session_state.announcement_page -= 1
+                        st.rerun()
+            
+            with col3:
+                st.markdown(
+                    f"<div style='text-align: center; padding: 0.5rem;'>"
+                    f"<strong>{st.session_state.announcement_page}</strong> / {total_pages} 페이지 "
+                    f"(총 {total_count}개)"
+                    f"</div>", 
+                    unsafe_allow_html=True
+                )
+            
+            with col4:
+                if st.session_state.announcement_page < total_pages:
+                    if st.button("다음 ▶", key="next_page_team"):
+                        st.session_state.announcement_page += 1
+                        st.rerun()
+            
+            with col5:
+                if st.session_state.announcement_page < total_pages:
+                    if st.button("마지막 페이지 ▶▶", key="last_page_team"):
+                        st.session_state.announcement_page = total_pages
+                        st.rerun()
+    else:
+        st.info("팀 공지사항이 없습니다.")
 
-with col3:
-    if st.button(" 내 공지사항"):
-        st.session_state.announcement_mode = "my_announcements"
-        st.rerun()
 
-with col4:
-    if st.button(" 목록보기"):
-        st.session_state.announcement_mode = "list"
-        st.session_state.announcement_page = 1
-        st.rerun()
+# ==================== 세법 공지사항 탭 ====================
+with tab2:
+    st.markdown("### 세법 개정 공지사항")
+    st.info("자동 모니터링 시스템이 매일 아침 9시에 세법 개정사항을 확인하여 자동으로 등록합니다.")
+    
+    # 세법 공지사항 조회
+    tax_announcements, tax_total_pages, tax_total_count = announcement_service.get_announcements_by_category(
+        category="세법",
+        page=st.session_state.get("tax_announcement_page", 1)
+    )
+    
+    if tax_total_count > 0:
+        st.success(f"총 {tax_total_count}개의 세법 개정 공지사항이 있습니다.")
+        
+        for announcement in tax_announcements:
+            with st.expander(f" {announcement.get('title', '제목 없음')}", expanded=False):
+                st.markdown(f"**등록일:** {announcement_service.format_date(announcement.get('created_at', ''))}")
+                st.markdown(f"**등록자:** {announcement.get('author_name', '시스템')}")
+                st.markdown("---")
+                
+                # HTML 내용 렌더링
+                st.markdown(announcement.get('content', '내용 없음'), unsafe_allow_html=True)
+        
+        # 세법 공지사항 페이지네이션
+        if tax_total_pages > 1:
+            if "tax_announcement_page" not in st.session_state:
+                st.session_state.tax_announcement_page = 1
+            
+            col1, col2, col3, col4, col5 = st.columns([1, 1, 2, 1, 1])
+            
+            with col1:
+                if st.session_state.tax_announcement_page > 1:
+                    if st.button("◀◀ 첫 페이지", key="first_page_tax"):
+                        st.session_state.tax_announcement_page = 1
+                        st.rerun()
+            
+            with col2:
+                if st.session_state.tax_announcement_page > 1:
+                    if st.button("◀ 이전", key="prev_page_tax"):
+                        st.session_state.tax_announcement_page -= 1
+                        st.rerun()
+            
+            with col3:
+                st.markdown(
+                    f"<div style='text-align: center; padding: 0.5rem;'>"
+                    f"<strong>{st.session_state.tax_announcement_page}</strong> / {tax_total_pages} 페이지"
+                    f"</div>", 
+                    unsafe_allow_html=True
+                )
+            
+            with col4:
+                if st.session_state.tax_announcement_page < tax_total_pages:
+                    if st.button("다음 ▶", key="next_page_tax"):
+                        st.session_state.tax_announcement_page += 1
+                        st.rerun()
+            
+            with col5:
+                if st.session_state.tax_announcement_page < tax_total_pages:
+                    if st.button("마지막 페이지 ▶▶", key="last_page_tax"):
+                        st.session_state.tax_announcement_page = tax_total_pages
+                        st.rerun()
+    else:
+        st.info("아직 세법 개정 공지사항이 없습니다.")
 
-st.markdown("---")
+
 
 # 모드별 화면 렌더링
 if st.session_state.announcement_mode == "create":
@@ -135,18 +302,18 @@ if st.session_state.announcement_mode == "create":
         
         col1, col2 = st.columns(2)
         with col1:
-            submit_btn = st.form_submit_button(" 공지사항 발행", type="primary", use_container_width=True, disabled=is_guest())
+            submit_btn = st.form_submit_button(" 공지사항 작성", type="primary", use_container_width=True, disabled=is_guest())
             if submit_btn:
-                if check_permission("공지사항 발행"):
+                if check_permission("공지사항 작성"):
                     if title.strip() and content.strip():
                         success = announcement_service.create_announcement(title.strip(), content.strip())
                         if success:
-                            st.success("공지사항이 발행되었습니다!")
+                            st.success("공지사항이 작성되었습니다!")
                             st.session_state.announcement_mode = "list"
                             st.session_state.announcement_page = 1
                             st.rerun()
                         else:
-                            st.error("공지사항 발행에 실패했습니다.")
+                            st.error("공지사항 작성에 실패했습니다.")
                     else:
                         st.error("제목과 내용을 모두 입력해주세요.")
         
