@@ -36,7 +36,7 @@ def render_calendar(year=None, month=None, selected_categories=None):
     # 달력 컨테이너
     with st.container():
         # 헤더
-        st.markdown(f"#### 📅 {year}년 {month}월")
+        st.markdown(f"####  {year}년 {month}월")
         
         # 요일 헤더 - 일요일부터 시작
         weekdays = ["일", "월", "화", "수", "목", "금", "토"]

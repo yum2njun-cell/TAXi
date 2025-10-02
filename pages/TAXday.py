@@ -53,6 +53,48 @@ page_header("TAXday", "")
 with st.sidebar:
     sidebar_menu()
 
+# ⭐ 여기에 모달 함수 추가
+@st.dialog("일정 수정")
+def edit_schedule_modal(date_str, schedule_index, schedule):
+    """일정 수정 모달"""
+    tax_service = get_enhanced_calendar_service()
+    
+    with st.form("edit_schedule_form_modal"):
+        edit_title = st.text_input("일정 제목", value=schedule['title'])
+        
+        category_options = {
+            '부가세': '부', '법인세': '법', '원천세': '원',
+            '지방세': '지', '인지세': '인', '국제조세': '국', '기타': '기'
+        }
+        current_display = [k for k, v in category_options.items() if v == schedule['category']][0]
+        edit_category_display = st.selectbox("세목", list(category_options.keys()), 
+                                        index=list(category_options.keys()).index(current_display))
+        edit_category = category_options[edit_category_display]
+        edit_description = st.text_area("상세 설명", value=schedule['description'])
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.form_submit_button("수정 완료", use_container_width=True, disabled=is_guest()):
+                if check_permission("일정 수정"):
+                    success = tax_service.update_schedule(
+                        date_str, 
+                        schedule_index,
+                        edit_title, edit_category, edit_description
+                    )
+                    if success:
+                        st.success("일정이 수정되었습니다!")
+                        if "edit_schedule_index" in st.session_state:
+                            del st.session_state.edit_schedule_index
+                        st.rerun()
+                    else:
+                        st.error("일정 수정에 실패했습니다. (권한이 없거나 기본 일정입니다)")
+        
+        with col2:
+            if st.form_submit_button("취소", use_container_width=True):
+                if "edit_schedule_index" in st.session_state:
+                    del st.session_state.edit_schedule_index
+                st.rerun()
+
 # 세무 달력 서비스 초기화
 tax_service = get_enhanced_calendar_service()
 
@@ -220,8 +262,8 @@ with manage_col:
                         with col1:
                             if st.button("수정", key=f"edit_{i}", disabled=is_guest()):
                                 if check_permission("일정 수정"):
-                                    st.session_state.edit_schedule_index = i
-                                    st.rerun()
+                                    # ⭐ 모달 직접 호출
+                                    edit_schedule_modal(st.session_state.selected_date, i, schedule)
                         with col2:
                             if st.button("삭제", key=f"delete_{i}", disabled=is_guest()):
                                 if check_permission("일정 삭제"):
@@ -501,48 +543,3 @@ with manage_col:
                         st.error("제목과 설명을 모두 입력해주세요.")
     
     st.markdown("---")
-
-
-# 일정 수정 모달 (세션 상태로 관리)
-if "edit_schedule_index" in st.session_state and st.session_state.selected_date:
-    schedules = tax_service.get_schedules_for_date(st.session_state.selected_date)
-    if st.session_state.edit_schedule_index < len(schedules):
-        schedule = schedules[st.session_state.edit_schedule_index]
-        
-        st.markdown("---")
-        st.markdown("#### 일정 수정")
-        
-        # 기존 edit form을 다음으로 교체:
-        with st.form("edit_schedule_form"):
-            edit_title = st.text_input("일정 제목", value=schedule['title'])
-            category_options = {
-                '부가세': '부', '법인세': '법', '원천세': '원',
-                '지방세': '지', '인지세': '인', '국제조세': '국', '기타': '기'
-            }
-            current_display = [k for k, v in category_options.items() if v == schedule['category']][0]
-            edit_category_display = st.selectbox("세목", list(category_options.keys()), 
-                                            index=list(category_options.keys()).index(current_display))
-            edit_category = category_options[edit_category_display]
-            edit_description = st.text_area("상세 설명", value=schedule['description'])
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                with col1:
-                    if st.form_submit_button("수정 완료", disabled=is_guest()):
-                        if check_permission("일정 수정"):
-                            success = tax_service.update_schedule(
-                                st.session_state.selected_date, 
-                                st.session_state.edit_schedule_index,
-                                edit_title, edit_category, edit_description
-                            )
-                            if success:
-                                del st.session_state.edit_schedule_index
-                                st.success("일정이 수정되었습니다!")
-                                st.rerun()
-                            else:
-                                st.error("일정 수정에 실패했습니다. (권한이 없거나 기본 일정입니다)")
-            
-            with col2:
-                if st.form_submit_button("취소"):
-                    del st.session_state.edit_schedule_index
-                    st.rerun()

@@ -223,9 +223,12 @@ class TaxCalendarService:
         # 숨긴 기본 일정 필터링
         filtered_schedules = []
         for schedule in all_schedules:
-            schedule_key = f"{date_str}|{schedule['title']}"
-            if schedule.get('is_default', False) and schedule_key in hidden_schedules:
-                continue  # 숨긴 일정은 제외
+            # 기본 일정이면 숨김 여부 확인
+            if schedule.get('is_default', False):
+                schedule_key = f"{date_str}|{schedule['title']}"
+                if schedule_key in hidden_schedules:
+                    continue  # 이 제목의 모든 기본 일정 제외
+            
             filtered_schedules.append(schedule)
         
         return filtered_schedules
@@ -296,32 +299,17 @@ class TaxCalendarService:
         """기본 일정 숨기기"""
         from services.user_preferences_service import add_hidden_default_schedule
         
-        schedules = self.get_schedules_for_date(date_str)
+        # ⭐ 필터링된 일정을 다시 가져옴 (페이지에서 보는 것과 동일)
+        filtered_schedules = self.get_schedules_for_date(date_str)
         
-        if 0 <= schedule_index < len(schedules):
-            schedule = schedules[schedule_index]
+        if 0 <= schedule_index < len(filtered_schedules):
+            schedule = filtered_schedules[schedule_index]
             
             if schedule.get('is_default', False):
                 add_hidden_default_schedule(date_str, schedule['title'])
                 return True, "기본 일정이 숨겨졌습니다."
             else:
                 return False, "개인 일정은 '삭제' 버튼을 사용하세요."
-        
-        return False, "일정을 찾을 수 없습니다."
-
-    def hide_default_schedule(self, date_str, schedule_index):
-        """기본 일정 숨기기"""
-        from services.user_preferences_service import add_hidden_default_schedule
-        
-        if date_str in st.session_state.tax_schedules:
-            if 0 <= schedule_index < len(st.session_state.tax_schedules[date_str]):
-                schedule = st.session_state.tax_schedules[date_str][schedule_index]
-                
-                if schedule.get('is_default', False):
-                    add_hidden_default_schedule(date_str, schedule['title'])
-                    return True, "기본 일정이 숨겨졌습니다."
-                else:
-                    return False, "개인 일정은 '삭제' 버튼을 사용하세요."
         
         return False, "일정을 찾을 수 없습니다."
 
