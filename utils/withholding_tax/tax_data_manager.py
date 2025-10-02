@@ -123,27 +123,26 @@ class TaxDataManager:
             return False
     
     def add_record(self, record: Dict[str, Any], tax_type: str = "withholding_tax") -> bool:
-        """
-        새 기록 추가
-        
-        Args:
-            record: 추가할 기록
-            tax_type: 세목
-            
-        Returns:
-            저장 성공 여부
-        """
         records = self.load_records(tax_type)
         
-        # 고유 ID 생성 (연월 + 타임스탬프)
-        record['id'] = f"{record['year']}_{record['month']:02d}_{datetime.now().strftime('%H%M%S')}"
+        # 고유 ID 생성 (세목에 따라 다르게)
+        if 'quarter' in record:
+            # 부가세 (분기)
+            record['id'] = f"{record['year']}_Q{record['quarter']}_{datetime.now().strftime('%H%M%S')}"
+        else:
+            # 원천세 (월)
+            record['id'] = f"{record['year']}_{record['month']:02d}_{datetime.now().strftime('%H%M%S')}"
+        
         record['created_at'] = datetime.now().isoformat()
         record['updated_at'] = datetime.now().isoformat()
         
         records.append(record)
         
-        # 날짜순 정렬 (최신순)
-        records.sort(key=lambda x: (x['year'], x['month']), reverse=True)
+        # 날짜순 정렬 (세목별 분기)
+        if 'quarter' in record:
+            records.sort(key=lambda x: (x['year'], x.get('quarter', 0)), reverse=True)
+        else:
+            records.sort(key=lambda x: (x['year'], x.get('month', 0)), reverse=True)
         
         return self.save_records(records, tax_type)
     
@@ -174,13 +173,15 @@ class TaxDataManager:
         logger.warning(f"수정할 기록 없음: {record_id}")
         return False
     
-    def check_duplicate_record(self, year: int, month: int, tax_type: str = "withholding_tax") -> Optional[str]:
+    def check_duplicate_record(self, year: int, month: int = None, quarter: int = None, 
+                            tax_type: str = "withholding_tax") -> Optional[str]:
         """
         중복 기록 확인
         
         Args:
             year: 연도
-            month: 월
+            month: 월 (원천세용)
+            quarter: 분기 (부가세용)
             tax_type: 세목
             
         Returns:
@@ -189,8 +190,14 @@ class TaxDataManager:
         records = self.load_records(tax_type)
         
         for record in records:
-            if record['year'] == year and record['month'] == month:
-                return record['id']
+            # 부가세 (분기)
+            if quarter is not None:
+                if record['year'] == year and record.get('quarter') == quarter:
+                    return record['id']
+            # 원천세 (월)
+            elif month is not None:
+                if record['year'] == year and record.get('month') == month:
+                    return record['id']
         
         return None
     

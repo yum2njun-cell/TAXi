@@ -199,7 +199,95 @@ class TaxRecordService:
             logger.info(f"기록 수정 완료: {record_id}")
         
         return success
-    
+    def process_vat_file(self, excel_file, auto_date: bool = True) -> Dict[str, Any]:
+        """
+        부가세 파일 처리
+        
+        Args:
+            excel_file: 엑셀 파일
+            auto_date: 파일명에서 자동 날짜 추출
+            
+        Returns:
+            처리 결과
+        """
+        try:
+            from utils.vat.vat_parser import VATParser
+            
+            parser = VATParser()
+            
+            # 파일 저장
+            year_quarter = "temp"
+            if auto_date:
+                parsed = parser._parse_filename_date(excel_file.name)
+                if parsed:
+                    year, quarter = parsed
+                    year_quarter = f"{year}_{quarter}Q"
+            
+            # 임시 저장
+            temp_path = self.data_manager.upload_dir / f"vat_{year_quarter}_{excel_file.name}"
+            with open(temp_path, 'wb') as f:
+                f.write(excel_file.getbuffer())
+            
+            # 파싱
+            result = parser.parse_excel(str(temp_path))
+            
+            if not result['success']:
+                return result
+            
+            # 데이터 추출
+            data = result['data']
+            period = result['period']
+            year = period['year']
+            quarter = period['quarter']
+            
+            # 중복 체크
+            duplicate_id = self._check_vat_duplicate(year, quarter)
+            is_update = duplicate_id is not None
+            
+            if is_update:
+                logger.info(f"기존 부가세 데이터 발견: {year}년 {quarter}분기")
+                self.data_manager.delete_record_with_files(duplicate_id, 'vat')
+            
+            # 레코드 생성
+            record = {
+                'year': year,
+                'quarter': quarter,
+                'sales_vat': data['sales_vat'],
+                'purchase_vat': data['purchase_vat'],
+                'penalty': data['penalty'],
+                'payment_amount': data['payment_amount'],
+                'total_amount': data['payment_amount'],  
+                'excel_file': str(temp_path),
+                'has_excel': True
+            }
+            
+            # 저장
+            save_success = self.data_manager.add_record(record, 'vat')
+            
+            if not save_success:
+                return {'success': False, 'error': '데이터 저장 실패'}
+            
+            logger.info(f"부가세 기록 저장 완료: {year}년 {quarter}분기")
+            
+            return {
+                'success': True,
+                'data': data,
+                'period': period,
+                'is_update': is_update
+            }
+            
+        except Exception as e:
+            logger.error(f"부가세 처리 실패: {str(e)}")
+            return {'success': False, 'error': str(e)}
+
+    def _check_vat_duplicate(self, year: int, quarter: int) -> Optional[str]:
+        """부가세 중복 체크"""
+        return self.data_manager.check_duplicate_record(year, quarter=quarter, tax_type='vat')
+
+    def get_vat_records(self) -> List[Dict[str, Any]]:
+        """부가세 기록 조회"""
+        return self.data_manager.load_records('vat')
+
     def get_all_records(self, tax_type: str = "withholding_tax") -> List[Dict[str, Any]]:
         """모든 기록 조회"""
         return self.data_manager.load_records(tax_type)
@@ -243,6 +331,53 @@ class TaxRecordService:
         
         return filtered
     
+    def calculate_vat_changes(self, records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        부가세 전분기 대비 증감 계산
+        
+        Args:
+            records: 부가세 기록 리스트
+            
+        Returns:
+            증감 정보가 추가된 기록 리스트
+        """
+        if len(records) < 2:
+            return records
+        
+        # 날짜순 정렬 (오래된 것부터)
+        sorted_records = sorted(records, key=lambda x: (x['year'], x['quarter']))
+        
+        result = []
+        for i, record in enumerate(sorted_records):
+            enhanced_record = record.copy()
+            
+            # 전분기 대비
+            if i > 0:
+                prev = sorted_records[i - 1]
+                enhanced_record['prev_quarter_change'] = record['payment_amount'] - prev['payment_amount']
+                enhanced_record['prev_quarter_change_rate'] = (
+                    (record['payment_amount'] - prev['payment_amount']) / prev['payment_amount'] * 100
+                    if prev['payment_amount'] > 0 else 0
+                )
+            
+            # 전년 동분기 대비
+            for j in range(i):
+                prev = sorted_records[j]
+                if prev['year'] == record['year'] - 1 and prev['quarter'] == record['quarter']:
+                    enhanced_record['prev_year_change'] = record['payment_amount'] - prev['payment_amount']
+                    enhanced_record['prev_year_change_rate'] = (
+                        (record['payment_amount'] - prev['payment_amount']) / prev['payment_amount'] * 100
+                        if prev['payment_amount'] > 0 else 0
+                    )
+                    break
+            
+            result.append(enhanced_record)
+        
+        # 최신순으로 재정렬
+        result.sort(key=lambda x: (x['year'], x['quarter']), reverse=True)
+        
+        return result
+
     def delete_record(self, record_id: str, tax_type: str = "withholding_tax") -> bool:
         """기록 삭제 (파일 포함)"""
         return self.data_manager.delete_record_with_files(record_id, tax_type)
@@ -275,36 +410,42 @@ class TaxRecordService:
             return records
         
         # 날짜순 정렬 (오래된 것부터)
-        sorted_records = sorted(records, key=lambda x: (x['year'], x['month']))
+        sorted_records = sorted(records, key=lambda x: (x['year'], x.get('month', 0)))
         
         result = []
         for i, record in enumerate(sorted_records):
             enhanced_record = record.copy()
             
-            # 전월 대비
-            if i > 0:
+            # 금액 필드 통일 처리 (원천세: total_amount, 부가세: payment_amount)
+            current_amount = record.get('total_amount', record.get('payment_amount', 0))
+            
+            # 전월 대비 (월 단위 데이터만)
+            if i > 0 and 'month' in record:
                 prev = sorted_records[i - 1]
-                enhanced_record['prev_month_change'] = record['total_amount'] - prev['total_amount']
+                prev_amount = prev.get('total_amount', prev.get('payment_amount', 0))
+                
+                enhanced_record['prev_month_change'] = current_amount - prev_amount
                 enhanced_record['prev_month_change_rate'] = (
-                    (record['total_amount'] - prev['total_amount']) / prev['total_amount'] * 100
-                    if prev['total_amount'] > 0 else 0
+                    (current_amount - prev_amount) / prev_amount * 100
+                    if prev_amount > 0 else 0
                 )
             
             # 전년 동월 대비
             for j in range(i):
                 prev = sorted_records[j]
-                if prev['year'] == record['year'] - 1 and prev['month'] == record['month']:
-                    enhanced_record['prev_year_change'] = record['total_amount'] - prev['total_amount']
+                if prev['year'] == record['year'] - 1 and prev.get('month') == record.get('month'):
+                    prev_amount = prev.get('total_amount', prev.get('payment_amount', 0))
+                    enhanced_record['prev_year_change'] = current_amount - prev_amount
                     enhanced_record['prev_year_change_rate'] = (
-                        (record['total_amount'] - prev['total_amount']) / prev['total_amount'] * 100
-                        if prev['total_amount'] > 0 else 0
+                        (current_amount - prev_amount) / prev_amount * 100
+                        if prev_amount > 0 else 0
                     )
                     break
             
             result.append(enhanced_record)
         
         # 최신순으로 재정렬
-        result.sort(key=lambda x: (x['year'], x['month']), reverse=True)
+        result.sort(key=lambda x: (x['year'], x.get('month', 0)), reverse=True)
         
         return result
     
