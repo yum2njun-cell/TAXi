@@ -203,74 +203,76 @@ with tab1:
                                         # 세션 상태에 저장
                                         st.session_state[f"show_full_{article_key}"] = True
                                 
-                                # 전문 표시 (토글)
+                                # 전문 표시 - PDF 뷰어로 변경
                                 if st.session_state.get(f"show_full_{article_key}", False):
-                                    keyword = st.session_state.get("search_keyword", "")
-                                    
-                                    # 키워드 하이라이트 처리 및 앵커 추가
-                                    import re
-                                    
-                                    # 첫 번째 키워드에만 앵커 추가
-                                    counter = {'count': 0}  # 딕셔너리로 카운터 사용
-                                    
-                                    def highlight_keyword(match_obj):
-                                        counter['count'] += 1
-                                        if counter['count'] == 1:
-                                            return f'<span id="keyword_{article_key}" style="background: #FFD700; padding: 2px 4px; border-radius: 3px; font-weight: 600;">{match_obj.group(1)}</span>'
-                                        else:
-                                            return f'<span style="background: #FFEB3B; padding: 2px 4px; border-radius: 3px;">{match_obj.group(1)}</span>'
-                                    
-                                    content_with_highlight = re.sub(
-                                        f'({re.escape(keyword)})',
-                                        highlight_keyword,
-                                        match['content'],
-                                        flags=re.IGNORECASE
-                                    )
-                                    
-                                    # 포맷팅 적용
-                                    formatted_content = st.session_state.treaty_search.format_article_content(content_with_highlight)
-                                    
-                                    with st.container():
-                                        st.markdown(f"""
-                                        <div style="background: white; border: 2px solid var(--gold); border-radius: 8px; padding: 1.5rem; margin-bottom: 1rem;">
-                                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 2px solid var(--gold); padding-bottom: 0.5rem;">
-                                                <h4 style="margin: 0; color: var(--gray-900);">
-                                                    {country} 조세조약 제{match['article_num']}조 - {match['article_title']}
-                                                </h4>
-                                            </div>
-                                            <div id="content_{article_key}" style="
-                                                max-height: 500px; 
-                                                overflow-y: auto; 
-                                                line-height: 2.0; 
-                                                color: var(--gray-900); 
-                                                white-space: pre-wrap; 
-                                                font-size: 0.95rem;
-                                                padding: 1rem;
-                                                background: #f9fafb;
-                                                border-radius: 4px;
-                                            ">
-                                                {formatted_content}
-                                            </div>
-                                        </div>
-                                        
-                                        <script>
-                                        // 키워드 위치로 자동 스크롤
-                                        setTimeout(function() {{
-                                            var keyword = document.getElementById('keyword_{article_key}');
-                                            var container = document.getElementById('content_{article_key}');
-                                            if (keyword && container) {{
-                                                var keywordTop = keyword.offsetTop;
-                                                var containerHeight = container.clientHeight;
-                                                container.scrollTop = keywordTop - (containerHeight / 3);
-                                            }}
-                                        }}, 100);
-                                        </script>
-                                        """, unsafe_allow_html=True)
-                                        
-                                        # 닫기 버튼
-                                        if st.button("닫기", key=f"close_{article_key}"):
+                                    # treaty_data에서 PDF 경로 가져오기
+                                    treaty_data = st.session_state.treaty_data.load_treaty_data(country)
+                                    pdf_path_str = treaty_data.get("pdf_path", "")
+
+                                    # pdf_path가 없으면 기본 경로에서 찾기
+                                    if not pdf_path_str:
+                                        from utils.treaty.constants import TREATY_RAW_DIR
+                                        pdf_filename = f"{country}_treaty.pdf"
+                                        pdf_path = TREATY_RAW_DIR / pdf_filename
+                                    else:
+                                        pdf_path = Path(pdf_path_str)
+
+                                    if not pdf_path.exists():
+                                        st.error(f"PDF 파일을 찾을 수 없습니다. 조약을 다시 업로드해주세요.")
+                                        if st.button("닫기", key=f"close_error_{article_key}"):
                                             st.session_state[f"show_full_{article_key}"] = False
                                             st.rerun()
+                                    else:
+                                        # PDF를 base64로 인코딩
+                                        import base64
+                                        
+                                        try:
+                                            with open(pdf_path, "rb") as f:
+                                                pdf_bytes = f.read()
+                                                pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
+                                            
+                                            # 해당 조항의 페이지로 스크롤
+                                            target_page = match['page']
+                                            
+                                            # Streamlit의 dialog 사용
+                                            @st.dialog(f"{country} 조세조약 - 제{match['article_num']}조", width="large")
+                                            def show_pdf_modal():
+                                                st.markdown(f"""
+                                                <div style="margin-bottom: 1rem; padding: 0.75rem; background: #FFF9E6; border-radius: 8px; border-left: 4px solid #F6DA7A;">
+                                                    <strong>{match['article_title']}</strong>
+                                                    <span style="color: #6B7280; margin-left: 1rem;">📍 {target_page}페이지</span>
+                                                </div>
+                                                """, unsafe_allow_html=True)
+                                                
+                                                # PDF 표시
+                                                st.markdown(f"""
+                                                <iframe
+                                                    src="data:application/pdf;base64,{pdf_base64}#page={target_page}&view=FitH"
+                                                    type="application/pdf"
+                                                    width="100%"
+                                                    height="600px"
+                                                    style="border: 2px solid #F6DA7A; border-radius: 8px;"
+                                                ></iframe>
+                                                """, unsafe_allow_html=True)
+                                                
+                                                st.markdown("<br>", unsafe_allow_html=True)
+                                                
+                                                # 닫기 버튼
+                                                col1, col2, col3 = st.columns([2, 1, 2])
+                                                with col2:
+                                                    if st.button("✕ 닫기", key=f"modal_close_{article_key}", 
+                                                            type="primary", use_container_width=True):
+                                                        st.session_state[f"show_full_{article_key}"] = False
+                                                        st.rerun()
+                                            
+                                            # 모달 표시
+                                            show_pdf_modal()
+                                                    
+                                        except Exception as e:
+                                            st.error(f"PDF 로딩 중 오류 발생: {e}")
+                                            if st.button("닫기", key=f"close_error3_{article_key}"):
+                                                st.session_state[f"show_full_{article_key}"] = False
+                                                st.rerun()
 
 with tab2:
     st.markdown("### 조세조약 PDF 업로드")

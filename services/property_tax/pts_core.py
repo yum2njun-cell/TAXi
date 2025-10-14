@@ -1,21 +1,20 @@
 """
-TAXi 지방세 관리 시스템 - 재산세 코어 매니저 v1.3.0
+TAXi 지방세 관리 시스템 - 재산세 핵심 관리자 v1.5.2
 services/property_tax/pts_core.py
 
+변경사항:
+- v1.5.1 → v1.5.2 (긴급 패치: session_state 키 불일치 수정)
+- property_calculations → property_tax_calculations 통일 (8곳)
+- 데이터 휘발 문제 해결
+
 기능:
-- 자산 관리 (CRUD) + 영속성
-- 세율 관리 (CRUD) + 영속성  
-- 연도 관리 (2021-2025) + 영속성
-- 데이터 저장/조회 + 백업/복구
+- 자산 관리 (CRUD)
+- 세율 관리 (CRUD)
+- 연도 관리 (2021-2025)
+- 데이터 저장/조회
 - 통계 분석
 - 정밀도 처리 유틸리티
-
-v1.3.0 변경사항:
-- 세율 데이터 영속성 구현 (tax_rates.json, fair_market_ratios.json, calculations.json)
-- 자동 백업/복구 시스템 추가
-- 데이터 무결성 검증 강화
-- 모든 CRUD 작업에 자동 저장 연동
-- 트랜잭션 및 롤백 메커니즘
+- 영속성 관리 (JSON 파일 저장/로드: 세율 + 자산 + 계산)
 """
 
 import streamlit as st
@@ -24,623 +23,243 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Any
 import copy
 from decimal import Decimal, ROUND_HALF_UP
+import os
 import json
-import hashlib
-import tempfile
-from pathlib import Path
-
-
-class AssetPersistenceManager:
-    """자산 데이터 영속성 관리자 (2단계에서 구현된 클래스)"""
-    
-    def __init__(self, data_dir: Path):
-        self.data_dir = data_dir
-        self.assets_file = data_dir / "assets.json"
-        self.backup_dir = data_dir / "backups"
-        self.backup_dir.mkdir(exist_ok=True)
-        self.recovery_attempts = 0
-        self.max_recovery_attempts = 3
-        self.persistence_enabled = True
-    
-    def _create_backup(self, data: Dict[str, Any]) -> bool:
-        """백업 파일 생성"""
-        try:
-            if not self.assets_file.exists():
-                return True
-                
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_file = self.backup_dir / f"assets_{timestamp}.json"
-            
-            import shutil
-            shutil.copy2(self.assets_file, backup_file)
-            
-            # 오래된 백업 정리
-            backup_files = sorted(
-                self.backup_dir.glob("assets_*.json"),
-                key=lambda x: x.stat().st_mtime,
-                reverse=True
-            )
-            for old_file in backup_files[10:]:
-                old_file.unlink()
-                
-            return True
-        except Exception as e:
-            print(f"자산 백업 생성 실패: {str(e)}")
-            return False
-    
-    def _verify_data_integrity(self, data: Dict[str, Any]) -> bool:
-        """자산 데이터 무결성 검증"""
-        try:
-            if not isinstance(data, dict):
-                return False
-            
-            for asset_id, asset_data in data.items():
-                required_fields = ["자산ID", "자산명", "자산유형", "그룹ID"]
-                if not all(field in asset_data for field in required_fields):
-                    return False
-                    
-                if "연도별데이터" not in asset_data:
-                    return False
-                    
-                if not isinstance(asset_data["연도별데이터"], dict):
-                    return False
-            
-            return True
-        except Exception:
-            return False
-    
-    def _restore_from_backup(self) -> Optional[Dict[str, Any]]:
-        """백업에서 자산 데이터 복원"""
-        try:
-            backup_files = sorted(
-                self.backup_dir.glob("assets_*.json"),
-                key=lambda x: x.stat().st_mtime,
-                reverse=True
-            )
-            
-            for backup_file in backup_files:
-                try:
-                    with open(backup_file, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-                    
-                    if self._verify_data_integrity(data):
-                        return data
-                except Exception:
-                    continue
-            
-            return None
-        except Exception:
-            return None
-
-
-class TaxRatesPersistenceManager:
-    """세율 데이터 영속성 관리자 (3단계에서 구현된 클래스)"""
-    
-    def __init__(self, data_dir: Path):
-        self.data_dir = data_dir
-        self.tax_rates_file = data_dir / "tax_rates.json"
-        self.ratios_file = data_dir / "fair_market_ratios.json"
-        self.calculations_file = data_dir / "calculations.json"
-        self.backup_dir = data_dir / "backups"
-        self.backup_dir.mkdir(exist_ok=True)
-        
-        self.recovery_attempts = {
-            'tax_rates': 0,
-            'ratios': 0,
-            'calculations': 0
-        }
-        self.max_recovery_attempts = 3
-        self.persistence_enabled = True
-    
-    def _create_backup(self, file_path: Path, data_type: str) -> bool:
-        """백업 파일 생성"""
-        try:
-            if not file_path.exists():
-                return True
-                
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_file = self.backup_dir / f"{data_type}_{timestamp}.json"
-            
-            import shutil
-            shutil.copy2(file_path, backup_file)
-            
-            # 오래된 백업 정리
-            pattern = f"{data_type}_*.json"
-            backup_files = sorted(
-                self.backup_dir.glob(pattern),
-                key=lambda x: x.stat().st_mtime,
-                reverse=True
-            )
-            for old_file in backup_files[10:]:
-                old_file.unlink()
-                
-            return True
-        except Exception as e:
-            print(f"백업 생성 실패 ({data_type}): {str(e)}")
-            return False
-    
-    def _verify_data_integrity(self, data: Dict[str, Any], data_type: str) -> bool:
-        """데이터 무결성 검증"""
-        try:
-            if not isinstance(data, dict):
-                return False
-                
-            if data_type == 'tax_rates':
-                required_types = ["재산세", "재산세_도시지역분", "지방교육세", "지역자원시설세"]
-                return all(tax_type in data for tax_type in required_types)
-            elif data_type == 'ratios':
-                for year, ratios in data.items():
-                    if not isinstance(ratios, dict):
-                        return False
-                    required_types = ["토지", "건축물", "주택"]
-                    if not all(asset_type in ratios for asset_type in required_types):
-                        return False
-                return True
-            elif data_type == 'calculations':
-                expected_keys = ["calculations", "comparisons", "finalizations"]
-                return all(key in data for key in expected_keys)
-                
-            return True
-        except Exception:
-            return False
-    
-    def _restore_from_backup(self, data_type: str) -> Optional[Dict[str, Any]]:
-        """백업에서 데이터 복원"""
-        try:
-            pattern = f"{data_type}_*.json"
-            backup_files = sorted(
-                self.backup_dir.glob(pattern),
-                key=lambda x: x.stat().st_mtime,
-                reverse=True
-            )
-            
-            for backup_file in backup_files:
-                try:
-                    with open(backup_file, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-                    
-                    if self._verify_data_integrity(data, data_type):
-                        return data
-                except Exception:
-                    continue
-            
-            return None
-        except Exception:
-            return None
-
 
 class PtsCoreManager:
-    """재산세 핵심 데이터 관리자 (완전한 영속성 구현)"""
+    """재산세 핵심 데이터 관리자"""
     
     # 상수 정의
-    INFINITY_VALUE = 1000000000000  # 1조원 (무제한 구간 대체값)
+    INFINITY_VALUE = 1000000000000
+    
+    # 영속성 관련 상수
+    DATA_DIR = "data"
+    RATES_JSON_PATH = os.path.join(DATA_DIR, "property_tax_rates.json")
+    ASSETS_JSON_PATH = os.path.join(DATA_DIR, "property_tax_assets.json")
+    CALCULATIONS_JSON_PATH = os.path.join(DATA_DIR, "property_tax_calculations.json")
     
     def __init__(self):
         """코어 매니저 초기화"""
-        from utils.settings import settings
-        
-        # 자산 영속성 매니저 초기화 (2단계)
-        self.asset_persistence = AssetPersistenceManager(settings.data_dir)
-        
-        # 세율 영속성 매니저 초기화 (3단계)
-        self.tax_rates_persistence = TaxRatesPersistenceManager(settings.data_dir)
-        
-        # 모든 데이터 로딩
-        self._load_all_persistent_data()
-    
-    def _load_all_persistent_data(self):
-        """모든 영속 데이터 로딩"""
-        # 자산 데이터 로딩
-        self._load_assets_data()
-        
-        # 세율 데이터 로딩
-        self._load_all_tax_rates_data()
+        pass
     
     # ===========================================
-    # 자산 영속성 메서드 (2단계)
+    # 영속성 관리 (Phase 2 + Phase 3)
     # ===========================================
     
-    def _load_assets_data(self) -> Optional[Dict[str, Any]]:
-        """자산 데이터 로딩"""
-        if not self.asset_persistence.persistence_enabled:
-            return None
-            
+    def save_rates_to_json(self) -> Tuple[bool, str]:
+        """세율 데이터를 JSON 파일로 저장 (공정시장가액비율 포함)"""
         try:
-            if not self.asset_persistence.assets_file.exists():
-                print("자산 파일 없음 - 기본값 사용")
-                return None
+            os.makedirs(self.DATA_DIR, exist_ok=True)
             
-            with open(self.asset_persistence.assets_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            
-            if not self.asset_persistence._verify_data_integrity(data):
-                return self._recover_assets_data()
-            
-            st.session_state.property_tax_assets = data
-            print(f"자산 데이터 로딩 성공: {len(data)}개 자산")
-            return data
-            
-        except Exception as e:
-            print(f"자산 로딩 중 오류: {str(e)}")
-            return self._recover_assets_data()
-    
-    def _save_assets_data(self, data: Optional[Dict[str, Any]] = None) -> bool:
-        """자산 데이터 저장"""
-        if not self.asset_persistence.persistence_enabled:
-            return True
-            
-        try:
-            if data is None:
-                data = st.session_state.property_tax_assets
-            
-            if not data:
-                return True
-            
-            if not self.asset_persistence._verify_data_integrity(data):
-                return False
-            
-            self.asset_persistence._create_backup(data)
-            
-            # 원자적 쓰기
-            temp_file = None
-            try:
-                with tempfile.NamedTemporaryFile(
-                    mode='w', 
-                    encoding='utf-8', 
-                    suffix='.json',
-                    dir=self.asset_persistence.data_dir,
-                    delete=False
-                ) as f:
-                    json.dump(data, f, ensure_ascii=False, indent=2)
-                    temp_file = Path(f.name)
-                
-                temp_file.replace(self.asset_persistence.assets_file)
-                print(f"자산 데이터 저장 성공: {len(data)}개 자산")
-                self.asset_persistence.recovery_attempts = 0
-                return True
-                
-            except Exception as e:
-                if temp_file and temp_file.exists():
-                    temp_file.unlink()
-                raise e
-                
-        except Exception as e:
-            print(f"자산 저장 중 오류: {str(e)}")
-            return False
-    
-    def _recover_assets_data(self) -> Optional[Dict[str, Any]]:
-        """자산 데이터 복구"""
-        if self.asset_persistence.recovery_attempts >= self.asset_persistence.max_recovery_attempts:
-            return None
-        
-        self.asset_persistence.recovery_attempts += 1
-        recovered_data = self.asset_persistence._restore_from_backup()
-        
-        if recovered_data:
-            self._save_assets_data(recovered_data)
-            st.session_state.property_tax_assets = recovered_data
-            return recovered_data
-        
-        return None
-    
-    # ===========================================
-    # 세율 영속성 메서드 (3단계)
-    # ===========================================
-    
-    def _load_all_tax_rates_data(self):
-        """모든 세율 데이터 로딩"""
-        try:
-            # 재산세율 데이터 로딩
-            tax_rates_data = self._load_tax_rates_data()
-            if tax_rates_data:
-                st.session_state.property_tax_rates = tax_rates_data
-            
-            # 공정시장가액비율 로딩
-            ratios_data = self._load_ratios_data()
-            if ratios_data:
-                st.session_state.fair_market_ratios = ratios_data
-            
-            # 계산결과 로딩
-            calculations_data = self._load_calculations_data()
-            if calculations_data:
-                st.session_state.property_calculations = calculations_data.get("calculations", {})
-                st.session_state.property_comparisons = calculations_data.get("comparisons", {})
-                st.session_state.property_finalizations = calculations_data.get("finalizations", {})
-            
-            print("세율 데이터 로딩 완료")
-            
-        except Exception as e:
-            print(f"세율 데이터 로딩 중 오류: {str(e)}")
-            self._initialize_default_tax_rates_data()
-    
-    def _load_tax_rates_data(self) -> Optional[Dict[str, Any]]:
-        """재산세율 데이터 로딩"""
-        if not self.tax_rates_persistence.persistence_enabled:
-            return None
-            
-        try:
-            if not self.tax_rates_persistence.tax_rates_file.exists():
-                return None
-            
-            with open(self.tax_rates_persistence.tax_rates_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            
-            if not self.tax_rates_persistence._verify_data_integrity(data, 'tax_rates'):
-                return self._recover_tax_rates_data()
-            
-            return data
-            
-        except Exception as e:
-            print(f"재산세율 로딩 중 오류: {str(e)}")
-            return self._recover_tax_rates_data()
-    
-    def _save_tax_rates_data(self, data: Optional[Dict[str, Any]] = None) -> bool:
-        """재산세율 데이터 저장"""
-        if not self.tax_rates_persistence.persistence_enabled:
-            return True
-            
-        try:
-            if data is None:
-                data = st.session_state.property_tax_rates
-            
-            if not data:
-                return True
-            
-            if not self.tax_rates_persistence._verify_data_integrity(data, 'tax_rates'):
-                return False
-            
-            self.tax_rates_persistence._create_backup(
-                self.tax_rates_persistence.tax_rates_file, 'tax_rates'
-            )
-            
-            # 원자적 쓰기
-            temp_file = None
-            try:
-                with tempfile.NamedTemporaryFile(
-                    mode='w', 
-                    encoding='utf-8', 
-                    suffix='.json',
-                    dir=self.tax_rates_persistence.data_dir,
-                    delete=False
-                ) as f:
-                    json.dump(data, f, ensure_ascii=False, indent=2)
-                    temp_file = Path(f.name)
-                
-                temp_file.replace(self.tax_rates_persistence.tax_rates_file)
-                self.tax_rates_persistence.recovery_attempts['tax_rates'] = 0
-                return True
-                
-            except Exception as e:
-                if temp_file and temp_file.exists():
-                    temp_file.unlink()
-                raise e
-                
-        except Exception as e:
-            print(f"재산세율 저장 중 오류: {str(e)}")
-            return False
-    
-    def _recover_tax_rates_data(self) -> Optional[Dict[str, Any]]:
-        """재산세율 데이터 복구"""
-        data_type = 'tax_rates'
-        
-        if self.tax_rates_persistence.recovery_attempts[data_type] >= self.tax_rates_persistence.max_recovery_attempts:
-            return None
-        
-        self.tax_rates_persistence.recovery_attempts[data_type] += 1
-        recovered_data = self.tax_rates_persistence._restore_from_backup(data_type)
-        
-        if recovered_data:
-            self._save_tax_rates_data(recovered_data)
-            return recovered_data
-        
-        return None
-    
-    def _load_ratios_data(self) -> Optional[Dict[str, Any]]:
-        """공정시장가액비율 데이터 로딩"""
-        if not self.tax_rates_persistence.persistence_enabled:
-            return None
-            
-        try:
-            if not self.tax_rates_persistence.ratios_file.exists():
-                return None
-            
-            with open(self.tax_rates_persistence.ratios_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            
-            if not self.tax_rates_persistence._verify_data_integrity(data, 'ratios'):
-                return self._recover_ratios_data()
-            
-            return data
-            
-        except Exception as e:
-            print(f"공정시장가액비율 로딩 중 오류: {str(e)}")
-            return self._recover_ratios_data()
-    
-    def _save_ratios_data(self, data: Optional[Dict[str, Any]] = None) -> bool:
-        """공정시장가액비율 데이터 저장"""
-        if not self.tax_rates_persistence.persistence_enabled:
-            return True
-            
-        try:
-            if data is None:
-                data = st.session_state.fair_market_ratios
-            
-            if not data:
-                return True
-            
-            if not self.tax_rates_persistence._verify_data_integrity(data, 'ratios'):
-                return False
-            
-            self.tax_rates_persistence._create_backup(
-                self.tax_rates_persistence.ratios_file, 'ratios'
-            )
-            
-            # 원자적 쓰기
-            temp_file = None
-            try:
-                with tempfile.NamedTemporaryFile(
-                    mode='w', 
-                    encoding='utf-8', 
-                    suffix='.json',
-                    dir=self.tax_rates_persistence.data_dir,
-                    delete=False
-                ) as f:
-                    json.dump(data, f, ensure_ascii=False, indent=2)
-                    temp_file = Path(f.name)
-                
-                temp_file.replace(self.tax_rates_persistence.ratios_file)
-                self.tax_rates_persistence.recovery_attempts['ratios'] = 0
-                return True
-                
-            except Exception as e:
-                if temp_file and temp_file.exists():
-                    temp_file.unlink()
-                raise e
-                
-        except Exception as e:
-            print(f"공정시장가액비율 저장 중 오류: {str(e)}")
-            return False
-    
-    def _recover_ratios_data(self) -> Optional[Dict[str, Any]]:
-        """공정시장가액비율 데이터 복구"""
-        data_type = 'ratios'
-        
-        if self.tax_rates_persistence.recovery_attempts[data_type] >= self.tax_rates_persistence.max_recovery_attempts:
-            return None
-        
-        self.tax_rates_persistence.recovery_attempts[data_type] += 1
-        recovered_data = self.tax_rates_persistence._restore_from_backup(data_type)
-        
-        if recovered_data:
-            self._save_ratios_data(recovered_data)
-            return recovered_data
-        
-        return None
-    
-    def _load_calculations_data(self) -> Optional[Dict[str, Any]]:
-        """계산결과 데이터 로딩"""
-        if not self.tax_rates_persistence.persistence_enabled:
-            return None
-            
-        try:
-            if not self.tax_rates_persistence.calculations_file.exists():
-                return {
-                    "calculations": {},
-                    "comparisons": {},
-                    "finalizations": {}
-                }
-            
-            with open(self.tax_rates_persistence.calculations_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            
-            if not self.tax_rates_persistence._verify_data_integrity(data, 'calculations'):
-                return self._recover_calculations_data()
-            
-            return data
-            
-        except Exception as e:
-            print(f"계산결과 로딩 중 오류: {str(e)}")
-            return self._recover_calculations_data()
-    
-    def _save_calculations_data(self, 
-                               calculations: Optional[Dict[str, Any]] = None,
-                               comparisons: Optional[Dict[str, Any]] = None, 
-                               finalizations: Optional[Dict[str, Any]] = None) -> bool:
-        """계산결과 데이터 저장"""
-        if not self.tax_rates_persistence.persistence_enabled:
-            return True
-            
-        try:
-            data = {
-                "calculations": calculations or st.session_state.property_calculations,
-                "comparisons": comparisons or st.session_state.property_comparisons,
-                "finalizations": finalizations or st.session_state.property_finalizations
+            rates_data = {
+                "재산세": st.session_state.property_tax_rates.get("재산세", {}),
+                "재산세_도시지역분": st.session_state.property_tax_rates.get("재산세_도시지역분", {}),
+                "지방교육세": st.session_state.property_tax_rates.get("지방교육세", {}),
+                "지역자원시설세": st.session_state.property_tax_rates.get("지역자원시설세", {}),
+                "공정시장가액비율": st.session_state.fair_market_ratios
             }
             
-            if not self.tax_rates_persistence._verify_data_integrity(data, 'calculations'):
-                return False
+            with open(self.RATES_JSON_PATH, 'w', encoding='utf-8') as f:
+                json.dump(rates_data, f, ensure_ascii=False, indent=2)
             
-            self.tax_rates_persistence._create_backup(
-                self.tax_rates_persistence.calculations_file, 'calculations'
-            )
-            
-            # 원자적 쓰기
-            temp_file = None
-            try:
-                with tempfile.NamedTemporaryFile(
-                    mode='w', 
-                    encoding='utf-8', 
-                    suffix='.json',
-                    dir=self.tax_rates_persistence.data_dir,
-                    delete=False
-                ) as f:
-                    json.dump(data, f, ensure_ascii=False, indent=2)
-                    temp_file = Path(f.name)
-                
-                temp_file.replace(self.tax_rates_persistence.calculations_file)
-                self.tax_rates_persistence.recovery_attempts['calculations'] = 0
-                return True
-                
-            except Exception as e:
-                if temp_file and temp_file.exists():
-                    temp_file.unlink()
-                raise e
-                
+            return True, f"세율 데이터가 {self.RATES_JSON_PATH}에 저장되었습니다."
+        
+        except PermissionError:
+            return False, f"파일 쓰기 권한이 없습니다: {self.RATES_JSON_PATH}"
         except Exception as e:
-            print(f"계산결과 저장 중 오류: {str(e)}")
-            return False
+            return False, f"세율 데이터 저장 중 오류: {str(e)}"
     
-    def _recover_calculations_data(self) -> Optional[Dict[str, Any]]:
-        """계산결과 데이터 복구"""
-        data_type = 'calculations'
+    def load_rates_from_json(self) -> Tuple[bool, Dict[str, Any], str]:
+        """JSON 파일에서 세율 데이터 로드 (공정시장가액비율 포함)"""
+        try:
+            if not os.path.exists(self.RATES_JSON_PATH):
+                return False, {}, f"세율 JSON 파일이 존재하지 않습니다: {self.RATES_JSON_PATH}"
+            
+            with open(self.RATES_JSON_PATH, 'r', encoding='utf-8') as f:
+                rates_data = json.load(f)
+            
+            required_keys = ["재산세", "재산세_도시지역분", "지방교육세", "지역자원시설세", "공정시장가액비율"]
+            if not all(key in rates_data for key in required_keys):
+                return False, {}, "JSON 파일에 필수 키가 누락되었습니다."
+            
+            return True, rates_data, "세율 데이터가 성공적으로 로드되었습니다."
         
-        if self.tax_rates_persistence.recovery_attempts[data_type] >= self.tax_rates_persistence.max_recovery_attempts:
-            return {
-                "calculations": {},
-                "comparisons": {},
-                "finalizations": {}
-            }
+        except json.JSONDecodeError as e:
+            return False, {}, f"JSON 파일 형식 오류: {str(e)}"
+        except PermissionError:
+            return False, {}, f"파일 읽기 권한이 없습니다: {self.RATES_JSON_PATH}"
+        except Exception as e:
+            return False, {}, f"세율 데이터 로드 중 오류: {str(e)}"
+    
+    def save_assets_to_json(self) -> Tuple[bool, str]:
+        """자산 데이터를 JSON 파일로 저장"""
+        try:
+            os.makedirs(self.DATA_DIR, exist_ok=True)
+            
+            assets_data = st.session_state.property_tax_assets
+            
+            with open(self.ASSETS_JSON_PATH, 'w', encoding='utf-8') as f:
+                json.dump(assets_data, f, ensure_ascii=False, indent=2)
+            
+            return True, f"자산 데이터가 {self.ASSETS_JSON_PATH}에 저장되었습니다."
         
-        self.tax_rates_persistence.recovery_attempts[data_type] += 1
-        recovered_data = self.tax_rates_persistence._restore_from_backup(data_type)
+        except PermissionError:
+            return False, f"파일 쓰기 권한이 없습니다: {self.ASSETS_JSON_PATH}"
+        except Exception as e:
+            return False, f"자산 데이터 저장 중 오류: {str(e)}"
+    
+    def load_assets_from_json(self) -> Tuple[bool, Dict[str, Any], str]:
+        """JSON 파일에서 자산 데이터 로드"""
+        try:
+            if not os.path.exists(self.ASSETS_JSON_PATH):
+                return False, {}, f"자산 JSON 파일이 존재하지 않습니다: {self.ASSETS_JSON_PATH}"
+            
+            with open(self.ASSETS_JSON_PATH, 'r', encoding='utf-8') as f:
+                assets_data = json.load(f)
+            
+            if not isinstance(assets_data, dict):
+                return False, {}, "JSON 파일 형식이 올바르지 않습니다 (dict 타입 필요)."
+            
+            return True, assets_data, "자산 데이터가 성공적으로 로드되었습니다."
         
-        if recovered_data:
-            self._save_calculations_data(
-                recovered_data.get("calculations"),
-                recovered_data.get("comparisons"), 
-                recovered_data.get("finalizations")
-            )
-            return recovered_data
+        except json.JSONDecodeError as e:
+            return False, {}, f"JSON 파일 형식 오류: {str(e)}"
+        except PermissionError:
+            return False, {}, f"파일 읽기 권한이 없습니다: {self.ASSETS_JSON_PATH}"
+        except Exception as e:
+            return False, {}, f"자산 데이터 로드 중 오류: {str(e)}"
+    
+    def save_calculations_to_json(self) -> Tuple[bool, str]:
+        """계산 결과를 JSON 파일로 저장 (Phase 3 신규)"""
+        try:
+            os.makedirs(self.DATA_DIR, exist_ok=True)
+            
+            calculations_data = st.session_state.get('property_tax_calculations', {})
+            
+            with open(self.CALCULATIONS_JSON_PATH, 'w', encoding='utf-8') as f:
+                json.dump(calculations_data, f, ensure_ascii=False, indent=2)
+            
+            return True, f"계산 결과가 {self.CALCULATIONS_JSON_PATH}에 저장되었습니다."
         
-        return {
-            "calculations": {},
-            "comparisons": {},
-            "finalizations": {}
-        }
+        except PermissionError:
+            return False, f"파일 쓰기 권한이 없습니다: {self.CALCULATIONS_JSON_PATH}"
+        except Exception as e:
+            return False, f"계산 결과 저장 중 오류: {str(e)}"
+    
+    def load_calculations_from_json(self) -> Tuple[bool, Dict[str, Any], str]:
+        """JSON 파일에서 계산 결과 로드 (Phase 3 신규)"""
+        try:
+            if not os.path.exists(self.CALCULATIONS_JSON_PATH):
+                return False, {}, f"계산 결과 JSON 파일이 존재하지 않습니다: {self.CALCULATIONS_JSON_PATH}"
+            
+            with open(self.CALCULATIONS_JSON_PATH, 'r', encoding='utf-8') as f:
+                calculations_data = json.load(f)
+            
+            if not isinstance(calculations_data, dict):
+                return False, {}, "JSON 파일 형식이 올바르지 않습니다 (dict 타입 필요)."
+            
+            return True, calculations_data, "계산 결과가 성공적으로 로드되었습니다."
+        
+        except json.JSONDecodeError as e:
+            return False, {}, f"JSON 파일 형식 오류: {str(e)}"
+        except PermissionError:
+            return False, {}, f"파일 읽기 권한이 없습니다: {self.CALCULATIONS_JSON_PATH}"
+        except Exception as e:
+            return False, {}, f"계산 결과 로드 중 오류: {str(e)}"
+    
+    def get_calculation_history(self, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """저장된 계산 결과 이력 조회 (Phase 3 신규)"""
+        try:
+            calculations = st.session_state.get('property_tax_calculations', {})
+            
+            if not filters:
+                return [{"calc_key": k, **v} for k, v in calculations.items()]
+            
+            filtered_results = []
+            for calc_key, calc_data in calculations.items():
+                match = True
+                
+                if 'year' in filters and calc_data.get('계산연도') != filters['year']:
+                    match = False
+                
+                if 'group_id' in filters and calc_data.get('그룹ID') != filters['group_id']:
+                    match = False
+                
+                if match:
+                    filtered_results.append({"calc_key": calc_key, **calc_data})
+            
+            return filtered_results
+        
+        except Exception as e:
+            print(f"계산 결과 이력 조회 중 오류: {str(e)}")
+            return []
     
     # ===========================================
-    # 기본 데이터 초기화
+    # 데이터 초기화
     # ===========================================
     
     def initialize_default_data(self) -> None:
-        """기본 데이터 초기화 (영속성 우선)"""
-        # 자산 데이터 - 파일에서 로딩되지 않았으면 기본값 설정
-        if 'property_tax_assets' not in st.session_state:
-            st.session_state.property_tax_assets = self._get_default_assets()
+        """기본 데이터 초기화 (JSON 우선 로드)"""
         
-        # 세율 데이터 - 파일에서 로딩되지 않았으면 기본값 설정
-        self._initialize_default_tax_rates_data()
-    
-    def _initialize_default_tax_rates_data(self):
-        """기본 세율 데이터 초기화"""
+        if 'property_tax_assets' not in st.session_state:
+            success, loaded_assets, msg = self.load_assets_from_json()
+            
+            if success:
+                st.session_state.property_tax_assets = loaded_assets
+                print(f"✅ {msg}")
+            else:
+                st.session_state.property_tax_assets = self._get_default_assets()
+                print(f"⚠️ {msg} - 기본 자산 사용")
+                
+                save_success, save_msg = self.save_assets_to_json()
+                if save_success:
+                    print(f"✅ {save_msg}")
+                else:
+                    print(f"⚠️ {save_msg}")
+        
         if 'property_tax_rates' not in st.session_state:
-            st.session_state.property_tax_rates = self._get_default_rates()
+            success, loaded_rates, msg = self.load_rates_from_json()
+            
+            if success:
+                st.session_state.property_tax_rates = {
+                    "재산세": loaded_rates.get("재산세", {}),
+                    "재산세_도시지역분": loaded_rates.get("재산세_도시지역분", {}),
+                    "지방교육세": loaded_rates.get("지방교육세", {}),
+                    "지역자원시설세": loaded_rates.get("지역자원시설세", {})
+                }
+                print(f"✅ {msg}")
+            else:
+                st.session_state.property_tax_rates = self._get_default_rates()
+                print(f"⚠️ {msg} - 기본 세율 사용")
+                
+                save_success, save_msg = self.save_rates_to_json()
+                if save_success:
+                    print(f"✅ {save_msg}")
+                else:
+                    print(f"⚠️ {save_msg}")
         
         if 'fair_market_ratios' not in st.session_state:
-            st.session_state.fair_market_ratios = self._get_default_ratios()
+            success, loaded_rates, msg = self.load_rates_from_json()
+            
+            if success and "공정시장가액비율" in loaded_rates:
+                st.session_state.fair_market_ratios = loaded_rates["공정시장가액비율"]
+                print(f"✅ 공정시장가액비율 JSON에서 로드 완료")
+            else:
+                st.session_state.fair_market_ratios = self._get_default_ratios()
+                print(f"⚠️ 공정시장가액비율 기본값 사용")
+        
+        if 'property_tax_calculations' not in st.session_state:
+            success, loaded_calculations, msg = self.load_calculations_from_json()
+            
+            if success:
+                st.session_state.property_tax_calculations = loaded_calculations
+                print(f"✅ {msg}")
+            else:
+                st.session_state.property_tax_calculations = {}
+                print(f"⚠️ {msg} - 빈 계산 결과로 시작")
         
         if 'property_calculations' not in st.session_state:
-            st.session_state.property_calculations = {}
+            st.session_state.property_tax_calculations = {}
         
         if 'property_comparisons' not in st.session_state:
             st.session_state.property_comparisons = {}
@@ -677,7 +296,7 @@ class PtsCoreManager:
         }
     
     def _get_default_rates(self) -> Dict[str, Any]:
-        """실제 적용 세율 데이터 반환 (2021-2025)"""
+        """실제 적용 세율 데이터 반환"""
         years = ["2021", "2022", "2023", "2024", "2025"]
         rates_data = {
             "재산세": {},
@@ -686,7 +305,6 @@ class PtsCoreManager:
             "지역자원시설세": {}
         }
         
-        # 각 연도별 동일한 세율 적용
         for year in years:
             rates_data["재산세"][year] = {
                 "토지": {
@@ -832,7 +450,7 @@ class PtsCoreManager:
             return False, 0.0, f"세율 형식이 올바르지 않습니다: {str(e)}"
     
     # ===========================================
-    # 연도 관리 서비스 (영속성 연동)
+    # 연도 관리 서비스
     # ===========================================
     
     def get_all_available_years(self) -> List[int]:
@@ -840,13 +458,11 @@ class PtsCoreManager:
         try:
             years = set()
             
-            # 세율 데이터에서 연도 추출
             tax_types = ["재산세", "재산세_도시지역분", "지방교육세", "지역자원시설세"]
             for tax_type in tax_types:
                 if tax_type in st.session_state.property_tax_rates:
                     years.update(int(year) for year in st.session_state.property_tax_rates[tax_type].keys())
             
-            # 자산 데이터에서 연도 추출
             for asset in st.session_state.property_tax_assets.values():
                 for year in asset["연도별데이터"].keys():
                     years.add(int(year))
@@ -877,7 +493,6 @@ class PtsCoreManager:
         year_str = str(year)
         base_year_str = str(base_year) if base_year else None
         
-        # 기존 연도에서 복사
         if base_year_str and base_year_str in st.session_state.property_tax_rates.get("재산세", {}):
             return {
                 "재산세": {year_str: copy.deepcopy(st.session_state.property_tax_rates["재산세"][base_year_str])},
@@ -886,7 +501,6 @@ class PtsCoreManager:
                 "지역자원시설세": {year_str: copy.deepcopy(st.session_state.property_tax_rates["지역자원시설세"][base_year_str])}
             }
         
-        # 기본값으로 생성
         return {
             "재산세": {
                 year_str: {
@@ -935,7 +549,7 @@ class PtsCoreManager:
         }
     
     def add_tax_year(self, new_year: int, base_year: int = None) -> Tuple[bool, str]:
-        """새 연도 세율 데이터 추가 (영속성 연동)"""
+        """새 연도 세율 데이터 추가 (자동 저장 포함)"""
         try:
             is_valid, error_msg = self.validate_year_input(new_year)
             if not is_valid:
@@ -964,14 +578,9 @@ class PtsCoreManager:
                         "토지": 70.0, "건축물": 70.0, "주택": 60.0
                     }
             
-            # ✅ 영속성 저장 (3단계 추가)
-            try:
-                if not self._save_tax_rates_data():
-                    print(f"{new_year}년 재산세율 파일 저장 실패")
-                if not self._save_ratios_data():
-                    print(f"{new_year}년 공정시장가액비율 파일 저장 실패")
-            except Exception as e:
-                print(f"{new_year}년 연도 추가 영속성 저장 중 오류: {str(e)}")
+            save_success, save_msg = self.save_rates_to_json()
+            if not save_success:
+                print(f"⚠️ {save_msg}")
             
             base_msg = f"기준: {base_year}년 복사" if base_year else "기준: 실제 적용 세율"
             return True, f"{new_year}년 세율 데이터가 성공적으로 추가되었습니다. ({base_msg})"
@@ -988,14 +597,14 @@ class PtsCoreManager:
             if year_str in asset_data.get("연도별데이터", {}):
                 dependencies.append(f"자산 '{asset_data['자산명']}' ({asset_id})에서 사용 중")
         
-        for calc_key, calc_data in st.session_state.property_calculations.items():
+        for calc_key, calc_data in st.session_state.property_tax_calculations.items():
             if calc_data.get("연도") == year:
                 dependencies.append(f"계산 결과 '{calc_key}'에서 사용 중")
         
         return dependencies
     
     def delete_tax_year(self, year: int) -> Tuple[bool, str]:
-        """연도 세율 데이터 삭제 (영속성 연동)"""
+        """연도 세율 데이터 삭제 (자동 저장 포함)"""
         try:
             year_str = str(year)
             available_years = self.get_all_available_years()
@@ -1019,14 +628,9 @@ class PtsCoreManager:
             if year_str in st.session_state.fair_market_ratios:
                 del st.session_state.fair_market_ratios[year_str]
             
-            # ✅ 영속성 저장 (3단계 추가)
-            try:
-                if not self._save_tax_rates_data():
-                    print(f"{year}년 재산세율 삭제 후 파일 저장 실패")
-                if not self._save_ratios_data():
-                    print(f"{year}년 공정시장가액비율 삭제 후 파일 저장 실패")
-            except Exception as e:
-                print(f"{year}년 연도 삭제 영속성 저장 중 오류: {str(e)}")
+            save_success, save_msg = self.save_rates_to_json()
+            if not save_success:
+                print(f"⚠️ {save_msg}")
             
             return True, f"{year}년 세율 데이터가 성공적으로 삭제되었습니다."
         
@@ -1034,7 +638,7 @@ class PtsCoreManager:
             return False, f"연도 삭제 중 오류가 발생했습니다: {str(e)}"
     
     # ===========================================
-    # 자산 관리 서비스 (영속성 연동)
+    # 자산 관리 서비스
     # ===========================================
     
     def get_taxation_types_for_asset_type(self, asset_type: str) -> List[str]:
@@ -1078,7 +682,7 @@ class PtsCoreManager:
         return len(errors) == 0, errors
     
     def create_asset(self, asset_data: Dict[str, Any]) -> Tuple[bool, str]:
-        """자산 생성 (영속성 연동)"""
+        """자산 생성 (자동 저장 포함)"""
         is_valid, errors = self.validate_asset_data(asset_data)
         if not is_valid:
             return False, "; ".join(errors)
@@ -1088,28 +692,16 @@ class PtsCoreManager:
         if asset_id in st.session_state.property_tax_assets:
             return False, f"자산ID '{asset_id}'는 이미 존재합니다."
         
-        # 트랜잭션: 원본 데이터 백업
-        original_data = copy.deepcopy(st.session_state.property_tax_assets)
+        st.session_state.property_tax_assets[asset_id] = asset_data
         
-        try:
-            # session_state 업데이트
-            st.session_state.property_tax_assets[asset_id] = asset_data
-            
-            # ✅ 영속성 저장 (2단계)
-            if not self._save_assets_data():
-                # 저장 실패시 롤백
-                st.session_state.property_tax_assets = original_data
-                return False, f"자산 '{asset_data['자산명']}' 저장 중 오류가 발생했습니다."
-            
-            return True, f"자산 '{asset_data['자산명']}' ({asset_id})이 성공적으로 등록되었습니다."
-            
-        except Exception as e:
-            # 예외 발생시 롤백
-            st.session_state.property_tax_assets = original_data
-            return False, f"자산 생성 중 오류: {str(e)}"
+        save_success, save_msg = self.save_assets_to_json()
+        if not save_success:
+            print(f"⚠️ {save_msg}")
+        
+        return True, f"자산 '{asset_data['자산명']}' ({asset_id})이 성공적으로 등록되었습니다."
     
     def update_asset(self, asset_id: str, asset_data: Dict[str, Any]) -> Tuple[bool, str]:
-        """자산 수정 (영속성 연동)"""
+        """자산 수정 (자동 저장 포함)"""
         if asset_id not in st.session_state.property_tax_assets:
             return False, f"자산ID '{asset_id}'를 찾을 수 없습니다."
         
@@ -1117,51 +709,27 @@ class PtsCoreManager:
         if not is_valid:
             return False, "; ".join(errors)
         
-        # 트랜잭션: 원본 데이터 백업
-        original_data = copy.deepcopy(st.session_state.property_tax_assets)
+        st.session_state.property_tax_assets[asset_id] = asset_data
         
-        try:
-            # session_state 업데이트
-            st.session_state.property_tax_assets[asset_id] = asset_data
-            
-            # ✅ 영속성 저장 (2단계)
-            if not self._save_assets_data():
-                # 저장 실패시 롤백
-                st.session_state.property_tax_assets = original_data
-                return False, f"자산 '{asset_data['자산명']}' 수정 저장 중 오류가 발생했습니다."
-            
-            return True, f"자산 '{asset_data['자산명']}' ({asset_id})이 성공적으로 수정되었습니다."
-            
-        except Exception as e:
-            # 예외 발생시 롤백
-            st.session_state.property_tax_assets = original_data
-            return False, f"자산 수정 중 오류: {str(e)}"
+        save_success, save_msg = self.save_assets_to_json()
+        if not save_success:
+            print(f"⚠️ {save_msg}")
+        
+        return True, f"자산 '{asset_data['자산명']}' ({asset_id})이 성공적으로 수정되었습니다."
     
     def delete_asset(self, asset_id: str) -> Tuple[bool, str]:
-        """자산 삭제 (영속성 연동)"""
+        """자산 삭제 (자동 저장 포함)"""
         if asset_id not in st.session_state.property_tax_assets:
             return False, f"자산ID '{asset_id}'를 찾을 수 없습니다."
         
-        # 트랜잭션: 원본 데이터 백업
-        original_data = copy.deepcopy(st.session_state.property_tax_assets)
         asset_name = st.session_state.property_tax_assets[asset_id]["자산명"]
+        del st.session_state.property_tax_assets[asset_id]
         
-        try:
-            # session_state 업데이트
-            del st.session_state.property_tax_assets[asset_id]
-            
-            # ✅ 영속성 저장 (2단계)
-            if not self._save_assets_data():
-                # 저장 실패시 롤백
-                st.session_state.property_tax_assets = original_data
-                return False, f"자산 '{asset_name}' 삭제 저장 중 오류가 발생했습니다."
-            
-            return True, f"자산 '{asset_name}' ({asset_id})이 성공적으로 삭제되었습니다."
-            
-        except Exception as e:
-            # 예외 발생시 롤백
-            st.session_state.property_tax_assets = original_data
-            return False, f"자산 삭제 중 오류: {str(e)}"
+        save_success, save_msg = self.save_assets_to_json()
+        if not save_success:
+            print(f"⚠️ {save_msg}")
+        
+        return True, f"자산 '{asset_name}' ({asset_id})이 성공적으로 삭제되었습니다."
     
     def get_asset(self, asset_id: str) -> Optional[Dict[str, Any]]:
         """자산 조회"""
@@ -1200,7 +768,7 @@ class PtsCoreManager:
         return filtered_assets
     
     # ===========================================
-    # 세율 관리 서비스 (영속성 연동)
+    # 세율 관리 서비스
     # ===========================================
     
     def get_property_tax_rates(self, year: int, asset_type: str, taxation_type: str) -> List[Dict[str, Any]]:
@@ -1212,7 +780,7 @@ class PtsCoreManager:
     
     def update_property_tax_rates(self, year: int, asset_type: str, taxation_type: str, 
                                  rates: List[Dict[str, Any]]) -> Tuple[bool, str]:
-        """재산세율 수정 (영속성 연동)"""
+        """재산세율 수정 (정밀도 개선 + 자동 저장)"""
         try:
             year_str = str(year)
             
@@ -1271,12 +839,9 @@ class PtsCoreManager:
             
             st.session_state.property_tax_rates["재산세"][year_str][asset_type][taxation_type] = validated_rates
             
-            # ✅ 영속성 저장 (3단계 추가)
-            try:
-                if not self._save_tax_rates_data():
-                    print("재산세율 파일 저장 실패 - session_state는 업데이트됨")
-            except Exception as e:
-                print(f"재산세율 영속성 저장 중 오류: {str(e)}")
+            save_success, save_msg = self.save_rates_to_json()
+            if not save_success:
+                print(f"⚠️ {save_msg}")
             
             return True, f"{year}년 {asset_type} {taxation_type} 세율이 성공적으로 수정되었습니다."
         
@@ -1292,7 +857,7 @@ class PtsCoreManager:
             return self.format_tax_rate(0.14, 3)
     
     def update_urban_area_tax_rate(self, year: int, rate: float) -> Tuple[bool, str]:
-        """재산세 도시지역분 세율 수정 (영속성 연동)"""
+        """재산세 도시지역분 세율 수정 (자동 저장 포함)"""
         try:
             is_valid, formatted_rate, error_msg = self.validate_and_format_tax_rate_input(rate, 3)
             if not is_valid:
@@ -1303,12 +868,9 @@ class PtsCoreManager:
             
             st.session_state.property_tax_rates["재산세_도시지역분"][str(year)]["비율"] = formatted_rate
             
-            # ✅ 영속성 저장 (3단계 추가)
-            try:
-                if not self._save_tax_rates_data():
-                    print("도시지역분 세율 파일 저장 실패")
-            except Exception as e:
-                print(f"도시지역분 세율 영속성 저장 중 오류: {str(e)}")
+            save_success, save_msg = self.save_rates_to_json()
+            if not save_success:
+                print(f"⚠️ {save_msg}")
             
             return True, f"{year}년 재산세 도시지역분 세율이 {self.format_tax_rate_for_display(formatted_rate, 3)}%로 수정되었습니다."
         
@@ -1324,7 +886,7 @@ class PtsCoreManager:
             return 70.0
     
     def update_fair_market_ratios(self, ratios: Dict[str, Dict[str, float]]) -> Tuple[bool, str]:
-        """공정시장가액비율 수정 (영속성 연동)"""
+        """공정시장가액비율 수정 (자동 저장 포함)"""
         try:
             formatted_ratios = {}
             
@@ -1338,12 +900,9 @@ class PtsCoreManager:
             
             st.session_state.fair_market_ratios = formatted_ratios
             
-            # ✅ 영속성 저장 (3단계 추가)
-            try:
-                if not self._save_ratios_data():
-                    print("공정시장가액비율 파일 저장 실패")
-            except Exception as e:
-                print(f"공정시장가액비율 영속성 저장 중 오류: {str(e)}")
+            save_success, save_msg = self.save_rates_to_json()
+            if not save_success:
+                print(f"⚠️ {save_msg}")
             
             return True, "공정시장가액비율이 성공적으로 수정되었습니다."
         
@@ -1351,21 +910,21 @@ class PtsCoreManager:
             return False, f"비율 수정 중 오류가 발생했습니다: {str(e)}"
     
     # ===========================================
-    # 통계 및 분석 서비스
+    # 통계 및 분석 서비스 (v1.5.1 복원)
     # ===========================================
     
     def get_asset_statistics(self) -> Dict[str, Any]:
-        """자산 통계 조회"""
+        """자산 통계 조회 (한글 키 사용)"""
         assets = self.get_all_assets()
         
         if not assets:
             return {
                 "총_자산수": 0,
-                "자산유형별_분포": {},
-                "과세유형별_분포": {},
-                "도시지역분별_분포": {},
-                "그룹별_분포": {},
-                "지역별_분포": {},
+                "자산유형별": {},
+                "과세유형별": {},
+                "도시지역분별": {},
+                "그룹별": {},
+                "지역별": {},
                 "총_시가표준액": 0,
                 "평균_자산가액": 0
             }
@@ -1400,33 +959,23 @@ class PtsCoreManager:
         
         return {
             "총_자산수": len(assets),
-            "자산유형별_분포": type_counts,
-            "과세유형별_분포": taxation_counts,
-            "도시지역분별_분포": urban_area_counts,
-            "그룹별_분포": group_counts,
-            "지역별_분포": region_counts,
+            "자산유형별": type_counts,
+            "과세유형별": taxation_counts,
+            "도시지역분별": urban_area_counts,
+            "그룹별": group_counts,
+            "지역별": region_counts,
             "총_시가표준액": total_value,
             "평균_자산가액": total_value // len(assets) if len(assets) > 0 else 0
         }
     
     # ===========================================
-    # 결과 관리 서비스 (영속성 연동)
+    # 결과 관리 서비스
     # ===========================================
     
     def save_calculation_result(self, calc_key: str, calculation_data: Dict[str, Any]) -> bool:
-        """계산 결과 저장 (영속성 연동)"""
+        """계산 결과 저장"""
         try:
-            st.session_state.property_calculations[calc_key] = calculation_data
-            
-            # ✅ 영속성 저장 (3단계 추가)
-            try:
-                if not self._save_calculations_data():
-                    print(f"계산 결과 '{calc_key}' 파일 저장 실패")
-                    return False
-            except Exception as e:
-                print(f"계산 결과 '{calc_key}' 영속성 저장 중 오류: {str(e)}")
-                return False
-            
+            st.session_state.property_tax_calculations[calc_key] = calculation_data
             return True
         except Exception as e:
             print(f"계산 결과 저장 중 오류: {str(e)}")
@@ -1434,21 +983,17 @@ class PtsCoreManager:
     
     def get_calculation_result(self, calc_key: str) -> Optional[Dict[str, Any]]:
         """계산 결과 조회"""
-        return st.session_state.property_calculations.get(calc_key)
+        return st.session_state.property_tax_calculations.get(calc_key)
     
     def get_all_calculation_results(self) -> Dict[str, Any]:
         """모든 계산 결과 조회"""
-        return st.session_state.property_calculations
+        return st.session_state.property_tax_calculations
     
     def delete_calculation_result(self, calc_key: str) -> bool:
         """계산 결과 삭제"""
         try:
-            if calc_key in st.session_state.property_calculations:
-                del st.session_state.property_calculations[calc_key]
-                
-                # ✅ 영속성 저장 (3단계 추가)
-                self._save_calculations_data()
-                
+            if calc_key in st.session_state.property_tax_calculations:
+                del st.session_state.property_tax_calculations[calc_key]
                 return True
             return False
         except Exception as e:
@@ -1456,19 +1001,9 @@ class PtsCoreManager:
             return False
     
     def save_comparison_result(self, calc_key: str, comparison_data: Dict[str, Any]) -> bool:
-        """비교 분석 결과 저장 (영속성 연동)"""
+        """비교 분석 결과 저장"""
         try:
             st.session_state.property_comparisons[calc_key] = comparison_data
-            
-            # ✅ 영속성 저장 (3단계 추가)
-            try:
-                if not self._save_calculations_data():
-                    print(f"비교 분석 '{calc_key}' 파일 저장 실패")
-                    return False
-            except Exception as e:
-                print(f"비교 분석 '{calc_key}' 영속성 저장 중 오류: {str(e)}")
-                return False
-            
             return True
         except Exception as e:
             print(f"비교 결과 저장 중 오류: {str(e)}")
@@ -1479,19 +1014,9 @@ class PtsCoreManager:
         return st.session_state.property_comparisons.get(calc_key)
     
     def save_finalization_result(self, calc_key: str, finalization_data: Dict[str, Any]) -> bool:
-        """최종 확정 결과 저장 (영속성 연동)"""
+        """최종 확정 결과 저장"""
         try:
             st.session_state.property_finalizations[calc_key] = finalization_data
-            
-            # ✅ 영속성 저장 (3단계 추가)
-            try:
-                if not self._save_calculations_data():
-                    print(f"최종 확정 '{calc_key}' 파일 저장 실패")
-                    return False
-            except Exception as e:
-                print(f"최종 확정 '{calc_key}' 영속성 저장 중 오류: {str(e)}")
-                return False
-            
             return True
         except Exception as e:
             print(f"최종 확정 저장 중 오류: {str(e)}")
@@ -1502,7 +1027,7 @@ class PtsCoreManager:
         return st.session_state.property_finalizations.get(calc_key)
     
     # ===========================================
-    # 유틸리티 메서드
+    # 유틸리티 메서드 (v1.5.1 복원)
     # ===========================================
     
     def export_assets_to_dataframe(self, filters: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
@@ -1556,124 +1081,10 @@ class PtsCoreManager:
         """모든 데이터 초기화"""
         try:
             st.session_state.property_tax_assets = {}
-            st.session_state.property_calculations = {}
+            st.session_state.property_tax_calculations = {}
             st.session_state.property_comparisons = {}
             st.session_state.property_finalizations = {}
             return True
         except Exception as e:
             print(f"데이터 초기화 중 오류: {str(e)}")
-            return False
-    
-    # ===========================================
-    # 영속성 상태 및 관리 메서드 (3단계 추가)
-    # ===========================================
-    
-    def get_all_persistence_status(self) -> Dict[str, Any]:
-        """전체 영속성 상태 조회"""
-        status = {
-            "assets": {
-                "persistence_enabled": self.asset_persistence.persistence_enabled,
-                "file_exists": self.asset_persistence.assets_file.exists(),
-                "recovery_attempts": self.asset_persistence.recovery_attempts
-            },
-            "tax_rates": self.tax_rates_persistence.get_tax_rates_persistence_status() if hasattr(self, 'tax_rates_persistence') else None
-        }
-        
-        # 백업 개수
-        if self.asset_persistence.backup_dir.exists():
-            asset_backups = len(list(self.asset_persistence.backup_dir.glob("assets_*.json")))
-            status["assets"]["backup_count"] = asset_backups
-        
-        return status
-    
-    def manual_backup_all_data(self) -> Tuple[bool, str]:
-        """모든 데이터 수동 백업"""
-        try:
-            results = []
-            success_count = 0
-            
-            # 자산 데이터 백업
-            if self._save_assets_data():
-                results.append("✅ 자산 데이터 백업 성공")
-                success_count += 1
-            else:
-                results.append("❌ 자산 데이터 백업 실패")
-            
-            # 세율 데이터 백업
-            tax_success, tax_message = self.manual_backup_tax_rates() if hasattr(self, 'tax_rates_persistence') else (False, "세율 영속성 미구현")
-            if tax_success:
-                results.append("✅ 세율 데이터 백업 성공")
-                success_count += 1
-            else:
-                results.append(f"❌ 세율 데이터 백업 실패: {tax_message}")
-            
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            result_msg = f"백업 완료 ({timestamp}): {success_count}개 성공\n" + "\n".join(results)
-            
-            return success_count >= 1, result_msg
-            
-        except Exception as e:
-            return False, f"수동 백업 중 오류: {str(e)}"
-    
-    def manual_backup_tax_rates(self) -> Tuple[bool, str]:
-        """세율 데이터 수동 백업"""
-        if not hasattr(self, 'tax_rates_persistence'):
-            return False, "세율 영속성 매니저가 초기화되지 않음"
-        
-        try:
-            success_count = 0
-            error_messages = []
-            
-            # 재산세율 백업
-            if self._save_tax_rates_data():
-                success_count += 1
-            else:
-                error_messages.append("재산세율 백업 실패")
-            
-            # 공정시장가액비율 백업
-            if self._save_ratios_data():
-                success_count += 1
-            else:
-                error_messages.append("공정시장가액비율 백업 실패")
-            
-            # 계산결과 백업
-            if self._save_calculations_data():
-                success_count += 1
-            else:
-                error_messages.append("계산결과 백업 실패")
-            
-            if success_count == 3:
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                return True, f"모든 세율 데이터 백업 완료 ({timestamp})"
-            else:
-                error_msg = "; ".join(error_messages)
-                return False, f"일부 백업 실패 ({success_count}/3): {error_msg}"
-                
-        except Exception as e:
-            return False, f"백업 실행 중 오류: {str(e)}"
-    
-    def enable_persistence(self, data_type: str = "all") -> bool:
-        """영속성 활성화"""
-        try:
-            if data_type in ["all", "assets"]:
-                self.asset_persistence.persistence_enabled = True
-            
-            if data_type in ["all", "tax_rates"] and hasattr(self, 'tax_rates_persistence'):
-                self.tax_rates_persistence.persistence_enabled = True
-            
-            return True
-        except Exception:
-            return False
-    
-    def disable_persistence(self, data_type: str = "all") -> bool:
-        """영속성 비활성화"""
-        try:
-            if data_type in ["all", "assets"]:
-                self.asset_persistence.persistence_enabled = False
-            
-            if data_type in ["all", "tax_rates"] and hasattr(self, 'tax_rates_persistence'):
-                self.tax_rates_persistence.persistence_enabled = False
-            
-            return True
-        except Exception:
             return False

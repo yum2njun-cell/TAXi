@@ -16,22 +16,25 @@ class TreatyPDFProcessor:
         self.data_manager = TreatyDataManager()
     
     def extract_from_pdf(self, pdf_path: Path, country: str) -> Dict:
-        """PDF에서 텍스트 추출 및 구조화"""
+        """PDF에서 텍스트 추출 및 구조화 - pdfplumber 사용"""
+        import pdfplumber
+        
         try:
-            with open(pdf_path, 'rb') as file:
-                reader = PyPDF2.PdfReader(file)
-                
-                # 전체 텍스트 추출
-                full_text = ""
-                pages = []
-                
-                for page_num, page in enumerate(reader.pages, start=1):
-                    page_text = page.extract_text()
+            # pdfplumber로 텍스트 추출 (한글/특수문자 처리 개선)
+            full_text = ""
+            pages = []
+            
+            with pdfplumber.open(pdf_path) as pdf:
+                for page_num, page in enumerate(pdf.pages, start=1):
+                    # layout=True로 레이아웃 보존
+                    page_text = page.extract_text(layout=True) or ""
                     full_text += page_text + "\n"
                     pages.append({
                         "page_num": page_num,
                         "text": page_text
                     })
+                
+                total_pages = len(pdf.pages)
                 
                 # 조항별로 파싱
                 articles = self._parse_articles(full_text)
@@ -40,7 +43,8 @@ class TreatyPDFProcessor:
                 treaty_data = {
                     "country": country,
                     "filename": pdf_path.name,
-                    "total_pages": len(reader.pages),
+                    "pdf_path": str(pdf_path),  # 원본 PDF 경로 추가 ⭐
+                    "total_pages": total_pages,
                     "full_text": full_text,
                     "pages": pages,
                     "articles": articles
